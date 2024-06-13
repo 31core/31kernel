@@ -5,7 +5,7 @@ extern "C" {
     pub fn heap_start();
 }
 
-pub const NODE_SIZE: usize = 8196;
+pub const NODE_COMPATIBILITY: usize = 8196;
 
 #[derive(Clone, Copy, Debug, Default)]
 /**
@@ -51,7 +51,7 @@ pub struct Allocator {
     pub free: usize,
     pub pows: [Option<usize>; 64],
     pub free_start: Option<usize>,
-    pub free_nodes: [FreeNode; NODE_SIZE],
+    pub free_nodes: [FreeNode; NODE_COMPATIBILITY],
 }
 
 impl Allocator {
@@ -61,13 +61,10 @@ impl Allocator {
         self.start = heap_start as usize;
 
         fn floor_to_power_2(mem_size: usize) -> usize {
-            let mut floor_size = 1;
-            for pow in 0..64 {
-                if floor_size > mem_size {
-                    return pow - 1_usize;
+            for pow in (0..64).rev() {
+                if (mem_size >> pow) & 1 == 1 {
+                    return pow;
                 }
-
-                floor_size <<= 1;
             }
 
             0
@@ -76,7 +73,7 @@ impl Allocator {
         /* initialize free node linked table */
         self.free_start = Some(0);
         for (i, node) in self.free_nodes.iter_mut().enumerate() {
-            if i < NODE_SIZE - 1 {
+            if i < NODE_COMPATIBILITY - 1 {
                 *node = FreeNode {
                     addr: 0,
                     next: Some(i + 1),

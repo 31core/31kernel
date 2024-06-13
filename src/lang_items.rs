@@ -2,8 +2,12 @@ use core::panic::PanicInfo;
 
 use alloc::format;
 
+use crate::KMSG;
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    crate::device::uart::ns16550::print_str(&format!("{}\n", info));
+    unsafe {
+        KMSG.as_mut().unwrap().add_message(&format!("{}\n", info));
+    }
     loop {}
 }

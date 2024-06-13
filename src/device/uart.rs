@@ -27,7 +27,7 @@ pub mod ns16550 {
     pub fn put_char(c: u8) {
         let ptr = UART_ADDR as *mut u8;
         unsafe {
-            ptr.add(0).write_volatile(c);
+            ptr.write_volatile(c);
         }
     }
 

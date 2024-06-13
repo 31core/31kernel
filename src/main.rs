@@ -2,13 +2,20 @@
 #![no_main]
 
 mod arch;
+mod devfs;
 mod device;
+mod kmsg;
 mod lang_items;
 mod malloc;
 mod syscall;
+mod vfs;
 
 use core::arch::global_asm;
+
+use devfs::DevFS;
+use kmsg::{kmsg_init, KernelMessage};
 use malloc::*;
+use vfs::{FileEntry, VirtualFileSystem};
 
 extern crate alloc;
 
@@ -21,8 +28,11 @@ static mut GLOBAL: Allocator = Allocator {
     free_nodes: [FreeNode {
         addr: 0,
         next: None,
-    }; NODE_SIZE],
+    }; NODE_COMPATIBILITY],
 };
+
+pub static mut ROOT_VFS: Option<VirtualFileSystem> = None;
+pub static mut KMSG: Option<KernelMessage> = None;
 
 #[cfg(target_arch = "riscv64")]
 global_asm!(include_str!("arch/riscv64/entry.S"));
@@ -35,7 +45,13 @@ pub extern "C" fn kernel_main() {
     clear_bss();
     unsafe {
         GLOBAL.init(128 * 1024 * 1024);
+        ROOT_VFS = Some(VirtualFileSystem::default());
+        ROOT_VFS
+            .as_mut()
+            .unwrap()
+            .mount(Box::<DevFS>::default(), &[FileEntry::new("dev")]);
     }
+    kmsg_init();
 
     panic!();
 }

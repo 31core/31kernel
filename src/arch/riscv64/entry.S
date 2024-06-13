@@ -1,6 +1,5 @@
     .section .text.entry
     .globl _start
-    .extern trap
 _start:
     la sp, boot_stack_top
     la t1, trap

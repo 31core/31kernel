@@ -2,7 +2,13 @@ TYPE=debug
 ARCH=riscv64
 
 ifeq ($(ARCH), riscv64)
-RUST_TARGET=riscv64gc-unknown-none-elf
+	RUST_TARGET=riscv64gc-unknown-none-elf
+else ifeq ($(ARCH), arm64)
+	RUST_TARGET=aarch64-unknown-none
+endif
+
+ifeq ($(TYPE), release)
+	RUST_FLAGS=--release
 endif
 
 RUST_TARGET_PATH=./target/$(RUST_TARGET)/$(TYPE)
@@ -15,7 +21,7 @@ CPUS=1
 MEM=128M
 
 all:
-	cargo rustc --target $(RUST_TARGET) -- -Clink-arg=-Tsrc/lds/virt.lds
+	cargo rustc --target $(RUST_TARGET) $(RUST_FLAGS) -- -Clink-arg=-Tsrc/lds/virt.lds
     
 run: all
 	$(QEMU) -M $(MACH) -cpu $(CPU) -smp $(CPUS) -m $(MEM) -nographic -serial mon:stdio -bios none -kernel $(OUT)

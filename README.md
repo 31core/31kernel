@@ -7,7 +7,7 @@
 |Indentifier|Rust target|
 |-----------|-----------|
 |arm64      |aarch64-unknown-none|
-|riscv64     |riscv64gc-unknown-none-elf|
+|riscv64    |riscv64gc-unknown-none-elf|
 
 ## Source tree structure
 

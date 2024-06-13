@@ -11,32 +11,28 @@ pub const MODE_SV39: u64 = 8;
  * * `mode`: Mode from 60 to 63 bits.
  */
 pub unsafe fn set_satp(mut ppn: u64, mode: u64) {
-    ppn |= mode << 59;
+    ppn |= mode << 60;
     asm!("csrw satp, {}", in(reg) ppn);
+    asm!("sfence.vma")
 }
 
-pub unsafe fn get_satp() -> u64 {
-    let mut satp;
-    asm!("csrr {}, satp", out(reg) satp);
-
-    satp
-}
-
-const PTE_V_FLAG: u64 = 1;
-const PTE_R_FLAG: u64 = 1 << 1;
-const PTE_W_FLAG: u64 = 1 << 2;
-const PTE_X_FLAG: u64 = 1 << 3;
+pub const PTE_V_FLAG: u64 = 1;
+pub const PTE_R_FLAG: u64 = 1 << 1;
+pub const PTE_W_FLAG: u64 = 1 << 2;
+pub const PTE_X_FLAG: u64 = 1 << 3;
+pub const PTE_U_FLAG: u64 = 1 << 4;
 
 #[derive(Default, Clone, Copy)]
 pub struct PageTableEntry {
     pub r: bool,
     pub w: bool,
     pub x: bool,
+    pub u: bool,
     pub ppn: u64,
 }
 
-impl PageTableEntry {
-    fn load(pte_u64: u64) -> Self {
+impl From<u64> for PageTableEntry {
+    fn from(pte_u64: u64) -> Self {
         let mut pte = Self::default();
 
         if pte_u64 & PTE_R_FLAG != 0 {
@@ -51,30 +47,41 @@ impl PageTableEntry {
             pte.x = true;
         }
 
-        pte.ppn = pte_u64 >> 9;
+        if pte_u64 & PTE_U_FLAG != 0 {
+            pte.u = true;
+        }
+
+        pte.ppn = pte_u64 >> 10;
 
         pte
     }
-    fn dump(&self) -> u64 {
-        let mut pte = 0;
+}
 
-        pte |= PTE_V_FLAG;
+impl From<PageTableEntry> for u64 {
+    fn from(pte: PageTableEntry) -> Self {
+        let mut pte_u64 = 0;
 
-        if self.r {
-            pte |= PTE_R_FLAG;
+        pte_u64 |= PTE_V_FLAG;
+
+        if pte.r {
+            pte_u64 |= PTE_R_FLAG;
         }
 
-        if self.w {
-            pte |= PTE_W_FLAG;
+        if pte.w {
+            pte_u64 |= PTE_W_FLAG;
         }
 
-        if self.x {
-            pte |= PTE_X_FLAG;
+        if pte.x {
+            pte_u64 |= PTE_X_FLAG;
         }
 
-        pte |= self.ppn << 9;
+        if pte.u {
+            pte_u64 |= PTE_U_FLAG;
+        }
 
-        pte
+        pte_u64 |= pte.ppn << 10;
+
+        pte_u64
     }
 }
 
@@ -84,7 +91,7 @@ pub struct PageDtrectory {
 
 impl PageDtrectory {
     pub unsafe fn set_pte(&self, count: usize, pte: PageTableEntry) {
-        self.ptes.add(count).write(pte.dump());
+        self.ptes.add(count).write(pte.into());
     }
 }
 
@@ -107,11 +114,12 @@ impl PageManager {
      * Args:
      * * `vpn`: Virtual Page Number.
      * * `ppn`: Pysical Page Number.
+     * * `mode`: Page access mode.
      */
-    pub unsafe fn set_pte_addr(&self, vpn: u64, ppn: u64) {
-        let v1 = vpn / (512 * 512);
-        let v2 = vpn % (512 * 512) / 512;
-        let v3 = vpn % 512;
+    pub unsafe fn set_pte_addr(&self, vpn: u64, ppn: u64, mode: u64) {
+        let v1 = vpn >> 18;
+        let v2 = (vpn >> 9) & 0x1ff;
+        let v3 = vpn & 0x1ff;
 
         let v1_pte = *self.root.ptes.add(v1 as usize);
         let v1_pte = if v1_pte == 0 {
@@ -125,7 +133,7 @@ impl PageManager {
 
             pte
         } else {
-            PageTableEntry::load(v1_pte)
+            v1_pte.into()
         };
 
         let v2_pdir = PageDtrectory {
@@ -143,15 +151,18 @@ impl PageManager {
 
             pte
         } else {
-            PageTableEntry::load(v2_pte)
+            v2_pte.into()
         };
 
         let v3_pdir = PageDtrectory {
             ptes: (v2_pte.ppn << 12) as *mut u64,
         };
         let v3_pte = *v3_pdir.ptes.add(v3 as usize);
-        let mut v3_pte = PageTableEntry::load(v3_pte);
+        let mut v3_pte: PageTableEntry = v3_pte.into();
         v3_pte.ppn = ppn;
+        /* set mode */
+        let v3_pte: u64 = v3_pte.into();
+        let v3_pte = (v3_pte | mode).into();
         v3_pdir.set_pte(v3 as usize, v3_pte);
     }
     /** Allocate a page directory.
