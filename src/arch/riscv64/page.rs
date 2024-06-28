@@ -16,6 +16,13 @@ pub unsafe fn set_satp(mut ppn: u64, mode: u64) {
     asm!("sfence.vma")
 }
 
+pub unsafe fn get_satp() -> u64 {
+    let mut satp;
+    asm!("csrr {}, satp", out(reg) satp);
+
+    satp
+}
+
 pub const PTE_V_FLAG: u64 = 1;
 pub const PTE_R_FLAG: u64 = 1 << 1;
 pub const PTE_W_FLAG: u64 = 1 << 2;
@@ -105,6 +112,14 @@ impl PageManager {
         Self {
             root: PageDtrectory {
                 ptes: (root_pdir << 12) as *mut u64,
+            },
+        }
+    }
+    pub unsafe fn from_satp() -> Self {
+        let addr = get_satp() & 0xfffffffffff;
+        Self {
+            root: PageDtrectory {
+                ptes: (addr << 12) as *mut u64,
             },
         }
     }

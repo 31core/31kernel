@@ -11,7 +11,7 @@
 
 ## Source tree structure
 
-|Direcroty|Description|
+|Directory|Description|
 |---------|-----------|
 |arch     |Architecture related code.|
 |device   |Device drivers.|

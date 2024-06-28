@@ -1,4 +1,3 @@
-ENTRY(_start)
 BASE_ADDRESS = 0x80000000;
 
 SECTIONS
@@ -9,6 +8,8 @@ SECTIONS
         *(.text.entry)
         . = ALIGN(4);
         *(.text.trap)
+        . = ALIGN(4);
+        *(.text.strap)
         *(.text .text.*)
     }
 

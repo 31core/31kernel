@@ -10,12 +10,13 @@ mod malloc;
 mod syscall;
 mod vfs;
 
-use core::arch::global_asm;
+use core::arch::{asm, global_asm};
 
+use alloc::{boxed::Box, string::String};
 use devfs::DevFS;
 use kmsg::{kmsg_init, KernelMessage};
 use malloc::*;
-use vfs::{FileEntry, VirtualFileSystem};
+use vfs::VirtualFileSystem;
 
 extern crate alloc;
 
@@ -49,7 +50,9 @@ pub extern "C" fn kernel_main() {
         ROOT_VFS
             .as_mut()
             .unwrap()
-            .mount(Box::<DevFS>::default(), &[FileEntry::new("dev")]);
+            .mount(Box::<DevFS>::default(), &[String::from("dev")]);
+        #[cfg(target_arch = "riscv64")]
+        arch::riscv64::cpu::switch_to_s_level();
     }
     kmsg_init();
 
@@ -68,5 +71,14 @@ fn clear_bss() {
             0,
             bss_end as usize - bss_start as usize,
         );
+    }
+}
+
+fn kernel_wait() {
+    unsafe {
+        #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
+        asm!("wfi");
+        #[cfg(target_arch = "x86_64")]
+        asm!("hlt");
     }
 }
