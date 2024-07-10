@@ -19,6 +19,10 @@ use vfs::VirtualFileSystem;
 
 extern crate alloc;
 
+extern "C" {
+    pub fn heap_start();
+}
+
 #[cfg(target_arch = "riscv64")]
 global_asm!(include_str!("arch/riscv64/entry.S"));
 
@@ -29,7 +33,7 @@ global_asm!(include_str!("arch/arm64/entry.S"));
 pub extern "C" fn kernel_main() {
     clear_bss();
     unsafe {
-        malloc::GLOBAL_ALLOCATOR.init(128 * 1024 * 1024);
+        malloc::GLOBAL_ALLOCATOR.init(heap_start as usize, 128 * 1024 * 1024);
         vfs::ROOT_VFS = Some(VirtualFileSystem::default());
         vfs::ROOT_VFS
             .as_mut()

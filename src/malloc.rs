@@ -1,14 +1,16 @@
 use core::alloc::GlobalAlloc;
 use core::alloc::Layout;
 
-extern "C" {
-    pub fn heap_start();
+macro_rules! power_2 {
+    ($pow: expr) => {
+        1 << $pow
+    };
 }
 
 pub const NODE_COMPATIBILITY: usize = 8196;
 
 #[global_allocator]
-pub static mut GLOBAL_ALLOCATOR: Allocator = Allocator {
+pub static mut GLOBAL_ALLOCATOR: BuddyAllocator = BuddyAllocator {
     start: 0,
     free: 0,
     pows: [None; 64],
@@ -58,7 +60,7 @@ fn ceil_to_power_2(mem_size: usize) -> usize {
  * * `free_lists`: Recording relative address to `Allocator.start`.
 */
 #[derive(Debug)]
-pub struct Allocator {
+pub struct BuddyAllocator {
     pub start: usize,
     pub free: usize,
     pub pows: [Option<usize>; 64],
@@ -66,11 +68,11 @@ pub struct Allocator {
     pub free_nodes: [FreeNode; NODE_COMPATIBILITY],
 }
 
-impl Allocator {
+impl BuddyAllocator {
     /** Initialize Allocator. */
-    pub unsafe fn init(&mut self, mut mem_size: usize) {
+    pub unsafe fn init(&mut self, mem_start: usize, mut mem_size: usize) {
         self.free = mem_size;
-        self.start = heap_start as usize;
+        self.start = mem_start;
 
         fn floor_to_power_2(mem_size: usize) -> usize {
             for pow in (0..64).rev() {
@@ -104,7 +106,7 @@ impl Allocator {
 
             self.add_node(pow, FreeNode::new(current_ptr));
 
-            let node_size = 2_usize.pow(pow as u32);
+            let node_size = power_2!(pow);
             mem_size -= node_size;
             current_ptr += node_size;
 
@@ -118,11 +120,11 @@ impl Allocator {
     fn add_node(&mut self, pow: usize, mut node: FreeNode) {
         match self.free_start {
             Some(node_start) => {
+                self.free_start = self.free_nodes[node_start].next;
                 node.next = self.pows[pow];
-                let next = self.free_nodes[node_start].next;
                 self.pows[pow] = Some(node_start);
+
                 self.free_nodes[node_start] = node;
-                self.free_start = next;
             }
             None => panic!(),
         }
@@ -139,16 +141,16 @@ impl Allocator {
     }
 }
 
-unsafe impl Sync for Allocator {}
+unsafe impl Sync for BuddyAllocator {}
 
-unsafe impl GlobalAlloc for Allocator {
+unsafe impl GlobalAlloc for BuddyAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let mem_size = ceil_to_power_2(layout.size());
         let allocator = (self as *const Self as *mut Self).as_mut().unwrap();
         allocator.free -= mem_size;
 
         for (pow, start) in self.pows.iter().enumerate() {
-            let found_mem_size = 2_usize.pow(pow as u32);
+            let found_mem_size = power_2!(pow);
             if start.is_some() && found_mem_size == mem_size {
                 return (self.start + allocator.pop_node(pow).addr) as *mut u8;
             } else if start.is_some() && found_mem_size > mem_size {
@@ -180,7 +182,7 @@ unsafe impl GlobalAlloc for Allocator {
         let mut ptr_psh = ptr as usize - self.start;
         /* insert into free list */
         for pow in 0..self.pows.len() {
-            if 2_usize.pow(pow as u32) == mem_size {
+            if 1 << pow == mem_size {
                 power_psh = pow;
             }
         }
@@ -188,12 +190,12 @@ unsafe impl GlobalAlloc for Allocator {
         /* merge free list nodes if possible */
         for (pow, node) in self.pows.iter().enumerate() {
             if let Some(node_start) = *node {
-                let found_mem_size = 2_usize.pow(pow as u32);
+                let found_mem_size = power_2!(pow);
                 if found_mem_size == mem_size {
+                    let mut current = allocator.free_nodes[node_start];
+
                     /* left node */
                     if ptr_psh % 2 * found_mem_size == 0 {
-                        let mut current = allocator.free_nodes[node_start];
-
                         /* found partner node */
                         if ptr as usize + found_mem_size == current.addr {
                             allocator.pows[pow] = current.next;
@@ -210,7 +212,7 @@ unsafe impl GlobalAlloc for Allocator {
                             /* found partner node */
                             if ptr as usize + found_mem_size == next_node.addr {
                                 current.next = next_node.next;
-                                allocator.add_free_node(current.next.unwrap());
+                                allocator.add_free_node(next);
                                 power_psh = pow + 1;
 
                                 mem_size *= 2;
@@ -221,8 +223,6 @@ unsafe impl GlobalAlloc for Allocator {
                     }
                     /* right node */
                     else {
-                        let mut current = allocator.free_nodes[node_start];
-
                         /* found partner node */
                         if current.addr + found_mem_size == ptr as usize {
                             allocator.pows[pow] = current.next;
@@ -240,7 +240,7 @@ unsafe impl GlobalAlloc for Allocator {
                             /* found partner node */
                             if next_node.addr + found_mem_size == ptr as usize {
                                 current.next = next_node.next;
-                                allocator.add_free_node(current.next.unwrap());
+                                allocator.add_free_node(next);
                                 power_psh = pow + 1;
                                 ptr_psh -= mem_size;
 
@@ -254,6 +254,6 @@ unsafe impl GlobalAlloc for Allocator {
             }
         }
 
-        allocator.add_node(power_psh, FreeNode::new(power_psh));
+        allocator.add_node(power_psh, FreeNode::new(ptr_psh));
     }
 }

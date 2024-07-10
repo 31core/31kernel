@@ -42,10 +42,12 @@ impl FileSystem for DevFS {
                 "kmsg" => {
                     let mut buf_off = 0;
                     unsafe {
-                        for msg in &KMSG.as_ref().unwrap().msgs {
+                        for msg_entry in &KMSG.as_ref().unwrap().msgs {
                             if buf_off == buf.len() {
                                 break;
                             }
+
+                            let msg = msg_entry.to_string();
 
                             if offset >= msg.len() as u64 {
                                 offset -= msg.len() as u64;
