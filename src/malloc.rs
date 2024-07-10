@@ -7,6 +7,18 @@ extern "C" {
 
 pub const NODE_COMPATIBILITY: usize = 8196;
 
+#[global_allocator]
+pub static mut GLOBAL_ALLOCATOR: Allocator = Allocator {
+    start: 0,
+    free: 0,
+    pows: [None; 64],
+    free_start: None,
+    free_nodes: [FreeNode {
+        addr: 0,
+        next: None,
+    }; NODE_COMPATIBILITY],
+};
+
 #[derive(Clone, Copy, Debug, Default)]
 /**
  * Free list node for the buddy allocator.

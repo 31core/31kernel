@@ -14,26 +14,10 @@ use core::arch::{asm, global_asm};
 
 use alloc::{boxed::Box, string::String};
 use devfs::DevFS;
-use kmsg::{kmsg_init, KernelMessage};
-use malloc::*;
+use kmsg::{kmsg_init, KMSG};
 use vfs::VirtualFileSystem;
 
 extern crate alloc;
-
-#[global_allocator]
-static mut GLOBAL: Allocator = Allocator {
-    start: 0,
-    free: 0,
-    pows: [None; 64],
-    free_start: None,
-    free_nodes: [FreeNode {
-        addr: 0,
-        next: None,
-    }; NODE_COMPATIBILITY],
-};
-
-pub static mut ROOT_VFS: Option<VirtualFileSystem> = None;
-pub static mut KMSG: Option<KernelMessage> = None;
 
 #[cfg(target_arch = "riscv64")]
 global_asm!(include_str!("arch/riscv64/entry.S"));
@@ -45,14 +29,18 @@ global_asm!(include_str!("arch/arm64/entry.S"));
 pub extern "C" fn kernel_main() {
     clear_bss();
     unsafe {
-        GLOBAL.init(128 * 1024 * 1024);
-        ROOT_VFS = Some(VirtualFileSystem::default());
-        ROOT_VFS
+        malloc::GLOBAL_ALLOCATOR.init(128 * 1024 * 1024);
+        vfs::ROOT_VFS = Some(VirtualFileSystem::default());
+        vfs::ROOT_VFS
             .as_mut()
             .unwrap()
             .mount(Box::<DevFS>::default(), &[String::from("dev")]);
+
         #[cfg(target_arch = "riscv64")]
-        arch::riscv64::cpu::switch_to_s_level();
+        {
+            arch::riscv64::enable_timer();
+            arch::riscv64::cpu::switch_to_s_level();
+        }
     }
     kmsg_init();
 

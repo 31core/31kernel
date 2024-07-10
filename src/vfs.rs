@@ -5,6 +5,8 @@ use core::result::Result;
 
 pub type Path = [String];
 
+pub static mut ROOT_VFS: Option<VirtualFileSystem> = None;
+
 #[derive(Default)]
 pub struct VirtualFileSystem {
     pub mount_points: Vec<Vec<String>>,

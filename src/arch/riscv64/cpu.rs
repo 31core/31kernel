@@ -1,5 +1,11 @@
 use core::arch::asm;
 
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct Context {
+    regs: [u64; 32],
+}
+
 #[link_section = ".text.strap"]
 unsafe fn trap_switch_to_s_level() {
     let mut mstatus: u64;
