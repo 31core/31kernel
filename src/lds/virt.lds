@@ -4,14 +4,15 @@ SECTIONS
 {
     . = BASE_ADDRESS;
 
+    kernel_start = .;
     .text : {
         *(.text.entry)
         . = ALIGN(4);
-        *(.text.trap)
         . = ALIGN(4);
         *(.text.strap)
         *(.text .text.*)
     }
+    kernel_end = .;
 
     . = ALIGN(4K);
     .rodata : {
@@ -32,7 +33,7 @@ SECTIONS
         *(.bss .bss.*)
         *(.sbss .sbss.*)
     }
-
+    
     . = ALIGN(4K);
     bss_end = .;
 

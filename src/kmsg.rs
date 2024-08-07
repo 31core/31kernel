@@ -7,12 +7,8 @@ macro_rules! printk {
     ($($arg: tt)*) => {
         {
             use alloc::format;
-            unsafe {
-                crate::kmsg::KMSG
-                    .as_mut()
-                    .unwrap()
-                    .add_message(&format!($($arg)*));
-            }
+            let kmsg = unsafe { crate::kmsg::KMSG.as_mut().unwrap() };
+            kmsg.add_message(&format!($($arg)*));
         }
     };
 }

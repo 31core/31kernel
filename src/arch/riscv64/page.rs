@@ -1,6 +1,8 @@
 use alloc::alloc::{alloc_zeroed, Layout};
 use core::arch::asm;
 
+use crate::page::{PageACL, PageManagement};
+
 pub const MODE_SV39: u64 = 8;
 
 /**
@@ -123,15 +125,29 @@ impl PageManager {
             },
         }
     }
-    /**
-     * Set PTE address.
+    /** Allocate a page directory.
      *
-     * Args:
-     * * `vpn`: Virtual Page Number.
-     * * `ppn`: Pysical Page Number.
-     * * `mode`: Page access mode.
+     * Return: Pysical Page Number
      */
-    pub unsafe fn set_pte_addr(&self, vpn: u64, ppn: u64, mode: u64) {
+    pub unsafe fn alloc_page_dir() -> u64 {
+        alloc_zeroed(Layout::new::<[u8; 4096]>()) as u64 >> 12
+    }
+    pub fn root_ppn(&self) -> u64 {
+        self.root.ptes as u64 >> 12
+    }
+}
+
+impl PageManagement for PageManager {
+    unsafe fn set_pte_addr(&self, vpn: u64, ppn: u64, mode: &[PageACL]) {
+        let mut mode_u64 = 0;
+        for i in mode {
+            match i {
+                PageACL::Read => mode_u64 |= PTE_R_FLAG,
+                PageACL::Write => mode_u64 |= PTE_W_FLAG,
+                PageACL::Execute => mode_u64 |= PTE_X_FLAG,
+            }
+        }
+
         let v1 = vpn >> 18;
         let v2 = (vpn >> 9) & 0x1ff;
         let v3 = vpn & 0x1ff;
@@ -177,17 +193,10 @@ impl PageManager {
         v3_pte.ppn = ppn;
         /* set mode */
         let v3_pte: u64 = v3_pte.into();
-        let v3_pte = (v3_pte | mode).into();
+        let v3_pte = (v3_pte | mode_u64).into();
         v3_pdir.set_pte(v3 as usize, v3_pte);
     }
-    /** Allocate a page directory.
-     *
-     * Return: Pysical Page Number
-     */
-    pub unsafe fn alloc_page_dir() -> u64 {
-        alloc_zeroed(Layout::new::<[u8; 4096]>()) as u64 >> 12
-    }
-    pub fn root_ppn(&self) -> u64 {
-        self.root.ptes as u64 >> 12
+    unsafe fn switch_to(&self) {
+        set_satp(self.root_ppn(), MODE_SV39);
     }
 }

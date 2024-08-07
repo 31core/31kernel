@@ -2,9 +2,11 @@
     .globl _start
 _start:
     la sp, boot_stack_top
-    la t1, trap
-    csrw mtvec, t1
-    csrw stvec, t1
+    la t0, mtrap
+    csrw mtvec, t0
+
+    la t0, strap
+    csrw stvec, t0
     call kernel_main
 
     .section .bss.stack
