@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![allow(dead_code)]
 
 mod arch;
 /**
@@ -11,6 +12,7 @@ mod kmsg;
 mod lang_items;
 mod malloc;
 mod page;
+mod rand;
 mod syscall;
 mod task;
 mod vfs;
@@ -45,6 +47,7 @@ pub extern "C" fn kernel_main() {
     clear_bss();
     unsafe {
         malloc::GLOBAL_ALLOCATOR.init(heap_start as usize, MEM_SIZE);
+        rand::rand_init();
         vfs::ROOT_VFS = Some(VirtualFileSystem::default());
         vfs::ROOT_VFS
             .as_mut()

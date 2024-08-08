@@ -1,4 +1,4 @@
-use alloc::alloc::{alloc_zeroed, Layout};
+use alloc::alloc::{alloc_zeroed, dealloc, Layout};
 use core::arch::asm;
 
 use crate::page::{PageACL, PageManagement};
@@ -99,8 +99,25 @@ pub struct PageDtrectory {
 }
 
 impl PageDtrectory {
+    fn from_ppn(ppn: u64) -> Self {
+        Self {
+            ptes: (ppn << 12) as *mut u64,
+        }
+    }
     pub unsafe fn set_pte(&self, count: usize, pte: PageTableEntry) {
         self.ptes.add(count).write(pte.into());
+    }
+    /** check if a page directory contains any PTE */
+    fn is_empty(&self) -> bool {
+        for i in 0..512 {
+            unsafe {
+                if self.ptes.add(i).read() != 0 {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 }
 
@@ -132,13 +149,18 @@ impl PageManager {
     pub unsafe fn alloc_page_dir() -> u64 {
         alloc_zeroed(Layout::new::<[u8; 4096]>()) as u64 >> 12
     }
+    /** Release a page directory. */
+    pub unsafe fn release_page_dir(ppn: u64) {
+        dealloc((ppn << 12) as *mut u8, Layout::new::<[u8; 4096]>());
+    }
     pub fn root_ppn(&self) -> u64 {
         self.root.ptes as u64 >> 12
     }
 }
 
 impl PageManagement for PageManager {
-    unsafe fn set_pte_addr(&self, vpn: u64, ppn: u64, mode: &[PageACL]) {
+    unsafe fn map(&self, vpn: usize, ppn: usize, mode: &[PageACL]) {
+        /* convert ACLs list into riscv PTE mode field bits */
         let mut mode_u64 = 0;
         for i in mode {
             match i {
@@ -152,7 +174,7 @@ impl PageManagement for PageManager {
         let v2 = (vpn >> 9) & 0x1ff;
         let v3 = vpn & 0x1ff;
 
-        let v1_pte = *self.root.ptes.add(v1 as usize);
+        let v1_pte = *self.root.ptes.add(v1);
         let v1_pte = if v1_pte == 0 {
             /* v1 PTE is empty */
             let ppn = Self::alloc_page_dir();
@@ -160,17 +182,15 @@ impl PageManagement for PageManager {
                 ppn,
                 ..Default::default()
             };
-            self.root.set_pte(v1 as usize, pte);
+            self.root.set_pte(v1, pte);
 
             pte
         } else {
             v1_pte.into()
         };
 
-        let v2_pdir = PageDtrectory {
-            ptes: (v1_pte.ppn << 12) as *mut u64,
-        };
-        let v2_pte = *v2_pdir.ptes.add(v2 as usize);
+        let v2_pdir = PageDtrectory::from_ppn(v1_pte.ppn);
+        let v2_pte = *v2_pdir.ptes.add(v2);
         let v2_pte = if v2_pte == 0 {
             /* v2 PTE is empty */
             let ppn = Self::alloc_page_dir();
@@ -178,23 +198,42 @@ impl PageManagement for PageManager {
                 ppn,
                 ..Default::default()
             };
-            v2_pdir.set_pte(v2 as usize, pte);
+            v2_pdir.set_pte(v2, pte);
 
             pte
         } else {
             v2_pte.into()
         };
 
-        let v3_pdir = PageDtrectory {
-            ptes: (v2_pte.ppn << 12) as *mut u64,
-        };
-        let v3_pte = *v3_pdir.ptes.add(v3 as usize);
+        let v3_pdir = PageDtrectory::from_ppn(v2_pte.ppn);
+        let v3_pte = *v3_pdir.ptes.add(v3);
         let mut v3_pte: PageTableEntry = v3_pte.into();
-        v3_pte.ppn = ppn;
+        v3_pte.ppn = ppn as u64;
         /* set mode */
         let v3_pte: u64 = v3_pte.into();
         let v3_pte = (v3_pte | mode_u64).into();
-        v3_pdir.set_pte(v3 as usize, v3_pte);
+        v3_pdir.set_pte(v3, v3_pte);
+    }
+    unsafe fn unmap(&self, vpn: usize) {
+        let v1 = vpn >> 18;
+        let v2 = (vpn >> 9) & 0x1ff;
+        let v3 = vpn & 0x1ff;
+
+        let v1_pte: PageTableEntry = (*self.root.ptes.add(v1)).into();
+        let v2_pdir = PageDtrectory::from_ppn(v1_pte.ppn);
+        let v2_pte: PageTableEntry = (*v2_pdir.ptes.add(v2)).into();
+        let v3_pdir = PageDtrectory::from_ppn(v2_pte.ppn);
+        v3_pdir.ptes.add(v3).write(0);
+
+        if v3_pdir.is_empty() {
+            Self::release_page_dir(v2_pte.ppn);
+            v2_pdir.ptes.add(v2).write(0);
+        }
+
+        if v2_pdir.is_empty() {
+            Self::release_page_dir(v1_pte.ppn);
+            self.root.ptes.add(v1).write(0);
+        }
     }
     unsafe fn switch_to(&self) {
         set_satp(self.root_ppn(), MODE_SV39);

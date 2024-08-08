@@ -1,7 +1,8 @@
 use alloc::collections::BTreeMap;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use crate::rand::{RandomGenerator, GLOBAL_RNG};
 use crate::{vfs::*, KMSG};
 use core::result::Result;
 
@@ -10,7 +11,7 @@ pub struct DevFS {
     pub fds: BTreeMap<u64, String>,
 }
 
-const DEVFS_FILES: [&str; 3] = ["zero", "null", "kmsg"];
+const DEVFS_FILES: [&str; 5] = ["zero", "null", "kmsg", "random", "urandom"];
 
 impl FileSystem for DevFS {
     fn create(&mut self, _path: &Path) -> Result<File, ()> {
@@ -33,9 +34,7 @@ impl FileSystem for DevFS {
         match self.fds.get(&fd.fd) {
             Some(file_name) => match &file_name[..] {
                 "zero" => {
-                    for ptr in buf.iter_mut() {
-                        *ptr = 0;
-                    }
+                    buf.fill(0);
 
                     Ok(buf.len() as u64)
                 }
@@ -62,6 +61,12 @@ impl FileSystem for DevFS {
                     }
 
                     Ok(buf_off as u64)
+                }
+                "random" | "urandom" => {
+                    unsafe {
+                        GLOBAL_RNG.as_mut().unwrap().gen_bytes(buf);
+                    }
+                    Ok(buf.len() as u64)
                 }
                 _ => Err(()), // unreadable device
             },

@@ -15,7 +15,6 @@ const SCAUSE_ECALL_U: u64 = 8;
 const SCAUSE_ECALL_S: u64 = 9;
 
 #[no_mangle]
-#[cfg(target_arch = "riscv64")]
 pub unsafe extern "C" fn mtrap_handler(ctx: &mut Context) -> &mut Context {
     let mut mcause: u64;
     asm!("csrr {}, mcause", out(reg) mcause);
@@ -27,7 +26,6 @@ pub unsafe extern "C" fn mtrap_handler(ctx: &mut Context) -> &mut Context {
 }
 
 #[no_mangle]
-#[cfg(target_arch = "riscv64")]
 pub unsafe extern "C" fn strap_handler(ctx: &mut Context) -> &mut Context {
     let mut scause: u64;
     asm!("csrr {}, scause", out(reg) scause);

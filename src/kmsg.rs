@@ -1,4 +1,6 @@
-use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
+use alloc::string::{String, ToString};
+use alloc::{borrow::ToOwned, vec::Vec};
+use core::fmt::Display;
 
 pub static mut KMSG: Option<KernelMessage> = None;
 
@@ -7,7 +9,7 @@ macro_rules! printk {
     ($($arg: tt)*) => {
         {
             use alloc::format;
-            let kmsg = unsafe { crate::kmsg::KMSG.as_mut().unwrap() };
+            let kmsg = unsafe { $crate::kmsg::KMSG.as_mut().unwrap() };
             kmsg.add_message(&format!($($arg)*));
         }
     };
@@ -32,9 +34,13 @@ impl KernelMessageEntry {
             message: msg.to_owned(),
         }
     }
+}
+
+impl Display for KernelMessageEntry {
     /** Fromat a message into `[ttttt:tttttt] xxxxxx` */
-    pub fn to_string(&self) -> String {
-        format!(
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
             "[{:5}.{:06}] {}",
             self.time / 1000000,
             self.time % 1000000,
