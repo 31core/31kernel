@@ -24,6 +24,10 @@ pub unsafe fn rand_init() {
 }
 
 pub trait RandomGenerator {
+    /**
+     * Update seed.
+     */
+    fn seed(&mut self, seed: u32);
     fn random_uint32(&mut self) -> u32;
     /**
      * Generate a random with a range.
@@ -50,7 +54,7 @@ pub trait RandomGenerator {
 }
 
 /**
- * A MT19937 random generator
+ * An MT19937 random generator
 */
 pub struct MT19937 {
     /** the array for the state vector */
@@ -60,24 +64,27 @@ pub struct MT19937 {
 }
 
 impl MT19937 {
-    pub fn new(mut seed: u32) -> Self {
+    pub fn new(seed: u32) -> Self {
         let mut state = Self {
             state_array: [0; N],
             state_index: 0,
         };
 
-        state.state_array[0] = seed;
-
-        for i in 1..N {
-            seed = F * (seed ^ (seed >> (W - 2))) + i as u32; // Knuth TAOCP Vol2. 3rd Ed. P.106 for multiplier.
-            state.state_array[i] = seed;
-        }
+        state.seed(seed);
 
         state
     }
 }
 
 impl RandomGenerator for MT19937 {
+    fn seed(&mut self, mut seed: u32) {
+        self.state_array[0] = seed;
+
+        for i in 1..N {
+            seed = F * (seed ^ (seed >> (W - 2))) + i as u32; // Knuth TAOCP Vol2. 3rd Ed. P.106 for multiplier.
+            self.state_array[i] = seed;
+        }
+    }
     fn random_uint32(&mut self) -> u32 {
         let mut k = self.state_index; // point to current state location
 

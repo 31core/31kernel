@@ -17,6 +17,24 @@ pub trait PageManagement {
      */
     unsafe fn map(&self, vpn: usize, ppn: usize, mode: &[PageACL]);
     /**
+     * Map as read-only acl
+     */
+    unsafe fn map_rodata(&self, vpn: usize, ppn: usize) {
+        self.map(vpn, ppn, &[PageACL::Read]);
+    }
+    /**
+     * Map as read-write acl
+     */
+    unsafe fn map_data(&self, vpn: usize, ppn: usize) {
+        self.map(vpn, ppn, &[PageACL::Read, PageACL::Write]);
+    }
+    /**
+     * Map as read-execute acl
+     */
+    unsafe fn map_text(&self, vpn: usize, ppn: usize) {
+        self.map(vpn, ppn, &[PageACL::Read, PageACL::Execute]);
+    }
+    /**
      * Unset the map.
      *
      * Args:
@@ -31,18 +49,16 @@ pub trait PageManagement {
     unsafe fn map_kernel_region(&self) {
         /* set kernel stack */
         for i in 0..STACK_SIZE / PAGE_SIZE {
-            self.map(
+            self.map_data(
                 crate::heap_start as usize + i,
                 crate::heap_start as usize + i,
-                &[PageACL::Read, PageACL::Write],
             );
         }
         /* set kernel code */
         for i in 0..(kernel_end as usize - kernel_start as usize) / PAGE_SIZE {
-            self.map(
+            self.map_text(
                 crate::kernel_start as usize + i,
                 crate::kernel_start as usize + i,
-                &[PageACL::Read, PageACL::Write, PageACL::Execute],
             );
         }
     }
