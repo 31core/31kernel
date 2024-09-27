@@ -1,5 +1,4 @@
-use core::alloc::GlobalAlloc;
-use core::alloc::Layout;
+use crate::PAGE_SIZE;
 
 macro_rules! power_2 {
     ($pow: expr) => {
@@ -8,12 +7,12 @@ macro_rules! power_2 {
 }
 
 pub const NODE_COMPATIBILITY: usize = 8196;
+const BUDDY_ALLOC_MAX_POW: usize = 64;
 
-#[global_allocator]
-pub static mut GLOBAL_ALLOCATOR: BuddyAllocator = BuddyAllocator {
+pub static mut BUDDY_ALLOCATOR: BuddyAllocator = BuddyAllocator {
     start: 0,
     free: 0,
-    pows: [None; 64],
+    pows: [None; BUDDY_ALLOC_MAX_POW],
     free_start: None,
     free_nodes: [FreeNode {
         addr: 0,
@@ -39,9 +38,9 @@ impl FreeNode {
     }
 }
 
-fn ceil_to_power_2(mem_size: usize) -> usize {
+pub fn ceil_to_power_2(mem_size: usize) -> usize {
     let mut ceil_size = 1;
-    for _ in 0..64 {
+    for _ in 0..BUDDY_ALLOC_MAX_POW {
         if ceil_size >= mem_size {
             break;
         }
@@ -54,28 +53,27 @@ fn ceil_to_power_2(mem_size: usize) -> usize {
 
 /**
  * The kernel buddy allocator.
- *
- * Fields:
- * * `start`: Start address.
- * * `free_lists`: Recording relative address to `Allocator.start`.
 */
 #[derive(Debug)]
 pub struct BuddyAllocator {
+    /** Start address. */
     pub start: usize,
+    /** Total free pages. */
     pub free: usize,
     pub pows: [Option<usize>; 64],
+    /** Recording relative address to `BuddyAllocator.start`. */
     pub free_start: Option<usize>,
     pub free_nodes: [FreeNode; NODE_COMPATIBILITY],
 }
 
 impl BuddyAllocator {
     /** Initialize Allocator. */
-    pub unsafe fn init(&mut self, mem_start: usize, mut mem_size: usize) {
-        self.free = mem_size;
+    pub unsafe fn init(&mut self, mem_start: usize, mut page_num: usize) {
+        self.free = page_num;
         self.start = mem_start;
 
         fn floor_to_power_2(mem_size: usize) -> usize {
-            for pow in (0..64).rev() {
+            for pow in (0..BUDDY_ALLOC_MAX_POW).rev() {
                 if (mem_size >> pow) & 1 == 1 {
                     return pow;
                 }
@@ -102,15 +100,15 @@ impl BuddyAllocator {
 
         let mut current_ptr = 0;
         loop {
-            let pow = floor_to_power_2(mem_size);
+            let pow = floor_to_power_2(page_num);
 
             self.add_node(pow, FreeNode::new(current_ptr));
 
             let node_size = power_2!(pow);
-            mem_size -= node_size;
-            current_ptr += node_size;
+            page_num -= node_size;
+            current_ptr += PAGE_SIZE * node_size;
 
-            if mem_size == 0 {
+            if page_num == 0 {
                 break;
             }
         }
@@ -134,37 +132,37 @@ impl BuddyAllocator {
         self.free_nodes[node].next = self.free_start;
         self.free_start = Some(node);
     }
+    /**
+     * Get a free node and remove it from the free list.
+     */
     fn pop_node(&mut self, pow: usize) -> FreeNode {
         let node = self.free_nodes[self.pows[pow].unwrap()];
         self.pows[pow] = node.next;
         node
     }
-}
+    /**
+     * Allocate pages, where `page_num` must be n power of 2.
+     */
+    pub fn alloc_pages(&mut self, page_num: usize) -> *mut u8 {
+        self.free -= page_num;
 
-unsafe impl Sync for BuddyAllocator {}
-
-unsafe impl GlobalAlloc for BuddyAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let mem_size = ceil_to_power_2(layout.size());
-        let allocator = (self as *const Self as *mut Self).as_mut().unwrap();
-        allocator.free -= mem_size;
-
-        for (pow, start) in self.pows.iter().enumerate() {
-            let found_mem_size = power_2!(pow);
-            if start.is_some() && found_mem_size == mem_size {
-                return (self.start + allocator.pop_node(pow).addr) as *mut u8;
-            } else if start.is_some() && found_mem_size > mem_size {
-                let mut found_size = found_mem_size;
-                let start_addr = allocator.pop_node(pow).addr;
-                let mut new_addr = start_addr + found_mem_size;
+        for pow in 0..BUDDY_ALLOC_MAX_POW {
+            let start = self.pows[pow];
+            let found_page_num = power_2!(pow);
+            if start.is_some() && found_page_num == page_num {
+                return (self.start + self.pop_node(pow).addr) as *mut u8;
+            } else if start.is_some() && found_page_num > page_num {
+                let mut found_size = found_page_num;
+                let start_addr = self.pop_node(pow).addr;
+                let mut new_addr = start_addr + PAGE_SIZE * found_page_num;
 
                 for i in 1..pow + 1 {
                     found_size /= 2;
-                    new_addr -= found_size;
-                    allocator.add_node(pow - i, FreeNode::new(new_addr));
+                    new_addr -= PAGE_SIZE * found_size;
+                    self.add_node(pow - i, FreeNode::new(new_addr));
 
-                    if found_size == mem_size {
-                        return (self.start + new_addr - found_size) as *mut u8;
+                    if found_size == page_num {
+                        return (self.start + new_addr - PAGE_SIZE * found_size) as *mut u8;
                     }
                 }
             }
@@ -173,49 +171,46 @@ unsafe impl GlobalAlloc for BuddyAllocator {
         // NULL pointer
         core::ptr::null_mut()
     }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let mut mem_size = ceil_to_power_2(layout.size());
-        let allocator = (self as *const Self as *mut Self).as_mut().unwrap();
-        allocator.free += mem_size;
-
+    pub fn free_pages(&mut self, ptr: *mut u8, mut page_num: usize) {
         let mut power_psh = 0;
         let mut ptr_psh = ptr as usize - self.start;
         /* insert into free list */
         for pow in 0..self.pows.len() {
-            if 1 << pow == mem_size {
+            if 1 << pow == page_num {
                 power_psh = pow;
             }
         }
 
         /* merge free list nodes if possible */
-        for (pow, node) in self.pows.iter().enumerate() {
+        for pow in 0..BUDDY_ALLOC_MAX_POW {
+            let node = &self.pows[pow];
             if let Some(node_start) = *node {
                 let found_mem_size = power_2!(pow);
-                if found_mem_size == mem_size {
-                    let mut current = allocator.free_nodes[node_start];
+                if found_mem_size == page_num {
+                    let mut current = self.free_nodes[node_start];
 
                     /* left node */
                     if ptr_psh % 2 * found_mem_size == 0 {
                         /* found partner node */
                         if ptr as usize + found_mem_size == current.addr {
-                            allocator.pows[pow] = current.next;
-                            allocator.add_free_node(node_start);
+                            self.pows[pow] = current.next;
+                            self.add_free_node(node_start);
                             power_psh = pow + 1;
 
-                            mem_size *= 2;
+                            page_num *= 2;
                             continue;
                         }
 
                         while let Some(next) = current.next {
-                            let next_node = allocator.free_nodes[next];
+                            let next_node = self.free_nodes[next];
 
                             /* found partner node */
                             if ptr as usize + found_mem_size == next_node.addr {
                                 current.next = next_node.next;
-                                allocator.add_free_node(next);
+                                self.add_free_node(next);
                                 power_psh = pow + 1;
 
-                                mem_size *= 2;
+                                page_num *= 2;
                                 break;
                             }
                             current = next_node;
@@ -225,26 +220,26 @@ unsafe impl GlobalAlloc for BuddyAllocator {
                     else {
                         /* found partner node */
                         if current.addr + found_mem_size == ptr as usize {
-                            allocator.pows[pow] = current.next;
-                            allocator.add_free_node(node_start);
+                            self.pows[pow] = current.next;
+                            self.add_free_node(node_start);
                             power_psh = pow + 1;
-                            ptr_psh -= mem_size;
+                            ptr_psh -= page_num;
 
-                            mem_size *= 2;
+                            page_num *= 2;
                             continue;
                         }
 
                         while let Some(next) = current.next {
-                            let next_node = allocator.free_nodes[next];
+                            let next_node = self.free_nodes[next];
 
                             /* found partner node */
                             if next_node.addr + found_mem_size == ptr as usize {
                                 current.next = next_node.next;
-                                allocator.add_free_node(next);
+                                self.add_free_node(next);
                                 power_psh = pow + 1;
-                                ptr_psh -= mem_size;
+                                ptr_psh -= page_num;
 
-                                mem_size *= 2;
+                                page_num *= 2;
                                 break;
                             }
                             current = next_node;
@@ -254,6 +249,6 @@ unsafe impl GlobalAlloc for BuddyAllocator {
             }
         }
 
-        allocator.add_node(power_psh, FreeNode::new(ptr_psh));
+        self.add_node(power_psh, FreeNode::new(ptr_psh));
     }
 }

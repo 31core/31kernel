@@ -2,16 +2,20 @@
 #![no_main]
 #![allow(dead_code)]
 
+/// Architecture related code
 mod arch;
-/**
- * dev filesystem usually mounted on `/dev`
- */
+/// dev filesystem usually mounted on `/dev`
 mod devfs;
+/// Generic device drivers
 mod device;
+/// Kernel debug message
 mod kmsg;
 mod lang_items;
 mod malloc;
+mod mcache;
+/// Common code for page management
 mod page;
+/// Random generators
 mod rand;
 mod syscall;
 mod task;
@@ -35,6 +39,7 @@ extern "C" {
 const MEM_SIZE: usize = 128 * 1024 * 1024;
 const STACK_SIZE: usize = 16 * 4096;
 const PAGE_SIZE: usize = 4096;
+const PTR_BYTES: usize = core::mem::size_of::<usize>();
 
 #[cfg(target_arch = "riscv64")]
 global_asm!(include_str!("arch/riscv64/entry.S"));
@@ -46,7 +51,7 @@ global_asm!(include_str!("arch/arm64/entry.S"));
 pub extern "C" fn kernel_main() {
     clear_bss();
     unsafe {
-        malloc::GLOBAL_ALLOCATOR.init(heap_start as usize, MEM_SIZE);
+        malloc::BUDDY_ALLOCATOR.init(heap_start as usize, MEM_SIZE / PAGE_SIZE);
         rand::rand_init();
         vfs::ROOT_VFS = Some(VirtualFileSystem::default());
         vfs::ROOT_VFS

@@ -15,23 +15,23 @@ pub trait PageManagement {
      * * `ppn`: Pysical Page Number.
      * * `mode`: Page access mode.
      */
-    unsafe fn map(&self, vpn: usize, ppn: usize, mode: &[PageACL]);
+    unsafe fn map(&mut self, vpn: usize, ppn: usize, mode: &[PageACL]);
     /**
      * Map as read-only acl
      */
-    unsafe fn map_rodata(&self, vpn: usize, ppn: usize) {
+    unsafe fn map_rodata(&mut self, vpn: usize, ppn: usize) {
         self.map(vpn, ppn, &[PageACL::Read]);
     }
     /**
      * Map as read-write acl
      */
-    unsafe fn map_data(&self, vpn: usize, ppn: usize) {
+    unsafe fn map_data(&mut self, vpn: usize, ppn: usize) {
         self.map(vpn, ppn, &[PageACL::Read, PageACL::Write]);
     }
     /**
      * Map as read-execute acl
      */
-    unsafe fn map_text(&self, vpn: usize, ppn: usize) {
+    unsafe fn map_text(&mut self, vpn: usize, ppn: usize) {
         self.map(vpn, ppn, &[PageACL::Read, PageACL::Execute]);
     }
     /**
@@ -40,13 +40,13 @@ pub trait PageManagement {
      * Args:
      * * `vpn`: Virtual Page Number.
      */
-    unsafe fn unmap(&self, vpn: usize);
+    unsafe fn unmap(&mut self, vpn: usize);
     /**
      * Switch to the page directory.
      */
     unsafe fn switch_to(&self);
     /** map kernel memory into vm */
-    unsafe fn map_kernel_region(&self) {
+    unsafe fn map_kernel_region(&mut self) {
         /* set kernel stack */
         for i in 0..STACK_SIZE / PAGE_SIZE {
             self.map_data(

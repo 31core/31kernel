@@ -15,7 +15,7 @@ unsafe impl Sync for Task {}
 
 pub unsafe fn task_init() {
     #[cfg(target_arch = "riscv64")]
-    let kernel_page = Box::new(crate::arch::riscv64::page::PageManager::new());
+    let mut kernel_page = Box::new(crate::arch::riscv64::page::PageManager::new());
     kernel_page.map_kernel_region();
     kernel_page.switch_to();
 
