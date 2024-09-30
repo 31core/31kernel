@@ -66,7 +66,7 @@ impl CachePage {
             is_init: false,
         }
     }
-    /** Initialize cache on pahes. */
+    /** Initialize cache on pages. */
     unsafe fn init(&mut self) {
         self.is_init = true;
 
@@ -75,7 +75,10 @@ impl CachePage {
                 .write(self.page_start.add((i + 1) * self.objsize) as usize);
         }
 
-        (self.page_start.add(self.page_num * PAGE_SIZE - PTR_BYTES) as *mut usize).write(0);
+        (self
+            .page_start
+            .add(self.page_num * PAGE_SIZE - self.objsize) as *mut usize)
+            .write(0);
     }
     unsafe fn alloc_obj(&mut self) -> Option<*mut u8> {
         if !self.is_init {
@@ -113,16 +116,16 @@ impl CachePage {
         self.objcount += 1;
 
         if (ptr as usize) < self.objstart as usize {
-            self.objstart = ptr;
             (ptr as *mut usize).write(self.objstart as usize);
+            self.objstart = ptr;
             return;
         }
 
         let mut next_ptr = self.objstart as *const usize;
         loop {
             if (next_ptr as usize) < ptr as usize && *next_ptr > ptr as usize {
-                (next_ptr as *mut usize).write(ptr as usize);
                 (ptr as *mut usize).write(*next_ptr);
+                (next_ptr as *mut usize).write(ptr as usize);
                 return;
             }
             if *next_ptr == 0 {
