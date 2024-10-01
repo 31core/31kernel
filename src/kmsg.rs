@@ -5,12 +5,31 @@ use core::fmt::Display;
 pub static mut KMSG: Option<KernelMessage> = None;
 
 #[macro_export]
+macro_rules! printk_error {
+    ($($arg: tt)*) => {
+        {
+            let kmsg = unsafe { $crate::kmsg::KMSG.as_mut().unwrap() };
+            kmsg.error(&alloc::format!($($arg)*));
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! printk_warning {
+    ($($arg: tt)*) => {
+        {
+            let kmsg = unsafe { $crate::kmsg::KMSG.as_mut().unwrap() };
+            kmsg.warning(&alloc::format!($($arg)*));
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! printk {
     ($($arg: tt)*) => {
         {
-            use alloc::format;
             let kmsg = unsafe { $crate::kmsg::KMSG.as_mut().unwrap() };
-            kmsg.add_message(&format!($($arg)*));
+            kmsg.debug(&alloc::format!($($arg)*));
         }
     };
 }
@@ -22,14 +41,29 @@ pub fn kmsg_init() {
 }
 
 #[derive(Default)]
+pub enum KernelMessageLevel {
+    /** The kernel has met critical error, usually on kernel panic. */
+    Fatal,
+    /** Error but not critical. */
+    Error,
+    /** Warning message but does no effect on running. */
+    Warning,
+    #[default]
+    /** Regular debug message or kernel log. */
+    Debug,
+}
+
+#[derive(Default)]
 pub struct KernelMessageEntry {
+    pub level: KernelMessageLevel,
     pub time: u64,
     pub message: String,
 }
 
 impl KernelMessageEntry {
-    pub fn new(time: u64, msg: &str) -> Self {
+    pub fn new(time: u64, level: KernelMessageLevel, msg: &str) -> Self {
         Self {
+            level,
             time,
             message: msg.to_owned(),
         }
@@ -56,12 +90,24 @@ pub struct KernelMessage {
 }
 
 impl KernelMessage {
-    pub fn add_message(&mut self, msg: &str) {
+    pub fn fatal(&mut self, msg: &str) {
+        self.add_message(KernelMessageLevel::Fatal, msg);
+    }
+    pub fn error(&mut self, msg: &str) {
+        self.add_message(KernelMessageLevel::Error, msg);
+    }
+    pub fn warning(&mut self, msg: &str) {
+        self.add_message(KernelMessageLevel::Warning, msg);
+    }
+    pub fn debug(&mut self, msg: &str) {
+        self.add_message(KernelMessageLevel::Debug, msg);
+    }
+    pub fn add_message(&mut self, level: KernelMessageLevel, msg: &str) {
         #[cfg(target_arch = "riscv64")]
         let time = crate::arch::riscv64::get_sys_time();
         #[cfg(target_arch = "aarch64")]
         let time = 0;
-        self.msgs.push(KernelMessageEntry::new(time, msg));
+        self.msgs.push(KernelMessageEntry::new(time, level, msg));
 
         if let Some(output_fn) = self.output_handler {
             output_fn(&self.msgs.last().unwrap().to_string());
