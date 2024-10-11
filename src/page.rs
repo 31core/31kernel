@@ -50,15 +50,15 @@ pub trait PageManagement {
         /* set kernel stack */
         for i in 0..STACK_SIZE / PAGE_SIZE {
             self.map_data(
-                crate::heap_start as usize + i,
-                crate::heap_start as usize + i,
+                (crate::heap_start as usize + i) >> 12,
+                (crate::heap_start as usize + i) >> 12,
             );
         }
         /* set kernel code */
         for i in 0..(kernel_end as usize - kernel_start as usize) / PAGE_SIZE {
             self.map_text(
-                crate::kernel_start as usize + i,
-                crate::kernel_start as usize + i,
+                (crate::kernel_start as usize + i) >> 12,
+                (crate::kernel_start as usize + i) >> 12,
             );
         }
     }
