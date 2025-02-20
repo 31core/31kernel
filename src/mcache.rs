@@ -1,9 +1,10 @@
-use crate::malloc::{ceil_to_power_2, BUDDY_ALLOCATOR};
-use crate::PAGE_SIZE;
+use crate::{
+    malloc::{ceil_to_power_2, BUDDY_ALLOCATOR},
+    PAGE_SIZE,
+};
 
 use alloc::boxed::Box;
-use core::alloc::GlobalAlloc;
-use core::alloc::Layout;
+use core::{alloc::GlobalAlloc, alloc::Layout};
 
 const CACHE_NUM: usize = 1024;
 const CACHE_OBJ_COUNT: usize = 512;
@@ -180,7 +181,8 @@ unsafe impl GlobalAlloc for CacheManager {
                 /* add a new cache */
                 let page_count = ceil_to_power_2(CACHE_OBJ_COUNT * obj_size / PAGE_SIZE);
                 let offset = core::mem::size_of::<CachePage>().div_ceil(obj_size);
-                let cache_addr = BUDDY_ALLOCATOR.alloc_pages(page_count) as *mut CachePage;
+                let cache_addr =
+                    (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_count) as *mut CachePage;
                 let mut cache = CachePage {
                     page_start: cache_addr as *mut u8,
                     page_num: page_count,
@@ -193,20 +195,24 @@ unsafe impl GlobalAlloc for CacheManager {
                 let addr = cache.alloc_obj().unwrap();
                 cache_addr.write(cache);
 
-                GLOBAL_ALLOCATOR.add_cache(cache_addr);
+                (*(&raw mut GLOBAL_ALLOCATOR)).add_cache(cache_addr);
                 addr
             } else {
-                GLOBAL_ALLOCATOR.next.as_mut().unwrap().alloc(layout)
+                (*(&raw mut GLOBAL_ALLOCATOR))
+                    .next
+                    .as_mut()
+                    .unwrap()
+                    .alloc(layout)
             }
         }
         /* use buddy allocator for large object */
         else {
-            BUDDY_ALLOCATOR.alloc_pages(ceil_to_power_2(layout.size() / PAGE_SIZE))
+            (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(ceil_to_power_2(layout.size() / PAGE_SIZE))
         }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         if to_objsize(layout.size()).is_some() {
-            for i in &mut GLOBAL_ALLOCATOR.caches {
+            for i in &mut (*(&raw mut GLOBAL_ALLOCATOR)).caches {
                 if let Some(cache) = *i {
                     if (ptr as usize) >= (*cache).page_start as usize
                         && (ptr as usize)
@@ -216,7 +222,8 @@ unsafe impl GlobalAlloc for CacheManager {
 
                         /* free object cache */
                         if (*cache).obj_alloc == 0 {
-                            BUDDY_ALLOCATOR.free_pages((*cache).page_start, (*cache).page_num);
+                            (*(&raw mut BUDDY_ALLOCATOR))
+                                .free_pages((*cache).page_start, (*cache).page_num);
                             *i = None;
                             GLOBAL_ALLOCATOR.is_cache_full = false;
                         }
@@ -225,7 +232,8 @@ unsafe impl GlobalAlloc for CacheManager {
                 }
             }
         } else {
-            BUDDY_ALLOCATOR.free_pages(ptr, ceil_to_power_2(layout.size() / PAGE_SIZE));
+            (*(&raw mut BUDDY_ALLOCATOR))
+                .free_pages(ptr, ceil_to_power_2(layout.size() / PAGE_SIZE));
         }
     }
 }

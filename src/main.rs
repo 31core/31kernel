@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![allow(dead_code)]
+#![allow(clippy::deref_addrof)]
 
 /// Architecture related code
 mod arch;
@@ -21,7 +22,10 @@ mod syscall;
 mod task;
 mod vfs;
 
-use core::arch::{asm, global_asm};
+use core::{
+    arch::{asm, global_asm},
+    mem::MaybeUninit,
+};
 
 use alloc::{boxed::Box, string::String};
 use devfs::DevFS;
@@ -39,7 +43,7 @@ extern "C" {
 const MEM_SIZE: usize = 128 * 1024 * 1024;
 const STACK_SIZE: usize = 16 * 4096;
 const PAGE_SIZE: usize = 4096;
-const PTR_BYTES: usize = core::mem::size_of::<usize>();
+const PTR_BYTES: usize = size_of::<usize>();
 
 #[cfg(target_arch = "riscv64")]
 global_asm!(include_str!("arch/riscv64/entry.S"));
@@ -51,12 +55,11 @@ global_asm!(include_str!("arch/arm64/entry.S"));
 pub extern "C" fn kernel_main() {
     clear_bss();
     unsafe {
-        malloc::BUDDY_ALLOCATOR.init(heap_start as usize, MEM_SIZE / PAGE_SIZE);
+        (*(&raw mut malloc::BUDDY_ALLOCATOR)).init(heap_start as usize, MEM_SIZE / PAGE_SIZE);
         rand::rand_init();
-        vfs::ROOT_VFS = Some(VirtualFileSystem::default());
-        vfs::ROOT_VFS
-            .as_mut()
-            .unwrap()
+        vfs::ROOT_VFS = MaybeUninit::new(VirtualFileSystem::default());
+        (*(&raw mut vfs::ROOT_VFS))
+            .assume_init_mut()
             .mount(Box::<DevFS>::default(), &[String::from("dev")]);
 
         #[cfg(target_arch = "riscv64")]

@@ -1,8 +1,11 @@
 use crate::page::PageManagement;
-use alloc::boxed::Box;
-use alloc::{vec, vec::Vec};
+use alloc::{
+    boxed::Box,
+    {vec, vec::Vec},
+};
+use core::mem::MaybeUninit;
 
-pub static mut TASKS: Option<Vec<Task>> = None;
+pub static mut TASKS: MaybeUninit<Vec<Task>> = MaybeUninit::uninit();
 
 const KERNEL_PID: usize = 0;
 
@@ -23,13 +26,13 @@ pub unsafe fn task_init() {
         page: kernel_page,
         pid: KERNEL_PID,
     };
-    TASKS = Some(vec![kernel_task]);
+    TASKS = MaybeUninit::new(vec![kernel_task]);
 }
 
 pub unsafe fn kernel_fork() {
     let new_task = Task {
-        pid: TASKS.as_ref().unwrap().len() + 1,
+        pid: (*(&raw mut TASKS)).assume_init_mut().len() + 1,
         page: Box::new(crate::arch::riscv64::page::PageManager::new()),
     };
-    TASKS.as_mut().unwrap().push(new_task);
+    (*(&raw mut TASKS)).assume_init_mut().push(new_task);
 }

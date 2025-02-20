@@ -1,4 +1,4 @@
-use core::ops::Range;
+use core::{mem::MaybeUninit, ops::Range};
 
 const N: usize = 624;
 const M: usize = 397;
@@ -15,12 +15,12 @@ const B: u32 = 0x9d2c5680;
 const C: u32 = 0xefc60000;
 const F: u32 = 1812433253;
 
-pub static mut GLOBAL_RNG: Option<MT19937> = None;
+pub static mut GLOBAL_RNG: MaybeUninit<MT19937> = MaybeUninit::uninit();
 
 const SEED: u32 = 0;
 
 pub unsafe fn rand_init() {
-    GLOBAL_RNG = Some(MT19937::new(SEED));
+    GLOBAL_RNG = MaybeUninit::new(MT19937::new(SEED));
 }
 
 pub trait RandomGenerator {

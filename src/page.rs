@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{kernel_end, kernel_start, PAGE_SIZE, STACK_SIZE};
 
 pub enum PageACL {
     Read,

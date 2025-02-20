@@ -6,3 +6,4 @@ authors = ["31core <31core@tutanota.com>"]
 license-file = "LICENSE"
 
 [dependencies]
+crypto_framework = { path = "crypto_framework" }

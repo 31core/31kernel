@@ -1,9 +1,14 @@
-use alloc::collections::BTreeMap;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+    vec::Vec,
+};
 
-use crate::rand::{RandomGenerator, GLOBAL_RNG};
-use crate::{vfs::*, KMSG};
+use crate::{
+    rand::{RandomGenerator, GLOBAL_RNG},
+    vfs::*,
+    KMSG,
+};
 use core::result::Result;
 
 #[derive(Default)]
@@ -41,7 +46,7 @@ impl FileSystem for DevFS {
                 "kmsg" => {
                     let mut buf_off = 0;
                     unsafe {
-                        for msg_entry in &KMSG.as_ref().unwrap().msgs {
+                        for msg_entry in &(*(&raw mut KMSG)).assume_init_ref().msgs {
                             if buf_off == buf.len() {
                                 break;
                             }
@@ -64,7 +69,7 @@ impl FileSystem for DevFS {
                 }
                 "random" | "urandom" => {
                     unsafe {
-                        GLOBAL_RNG.as_mut().unwrap().gen_bytes(buf);
+                        (*(&raw mut GLOBAL_RNG)).assume_init_mut().gen_bytes(buf);
                     }
                     Ok(buf.len() as u64)
                 }

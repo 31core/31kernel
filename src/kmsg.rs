@@ -1,14 +1,17 @@
-use alloc::string::{String, ToString};
-use alloc::{borrow::ToOwned, vec::Vec};
-use core::fmt::Display;
+use alloc::{
+    borrow::ToOwned,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::{fmt::Display, mem::MaybeUninit};
 
-pub static mut KMSG: Option<KernelMessage> = None;
+pub static mut KMSG: MaybeUninit<KernelMessage> = MaybeUninit::uninit();
 
 #[macro_export]
 macro_rules! printk_error {
     ($($arg: tt)*) => {
         {
-            let kmsg = unsafe { $crate::kmsg::KMSG.as_mut().unwrap() };
+            let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
             kmsg.error(&alloc::format!($($arg)*));
         }
     };
@@ -18,7 +21,7 @@ macro_rules! printk_error {
 macro_rules! printk_warning {
     ($($arg: tt)*) => {
         {
-            let kmsg = unsafe { $crate::kmsg::KMSG.as_mut().unwrap() };
+            let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
             kmsg.warning(&alloc::format!($($arg)*));
         }
     };
@@ -28,7 +31,7 @@ macro_rules! printk_warning {
 macro_rules! printk {
     ($($arg: tt)*) => {
         {
-            let kmsg = unsafe { $crate::kmsg::KMSG.as_mut().unwrap() };
+            let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
             kmsg.debug(&alloc::format!($($arg)*));
         }
     };
@@ -36,7 +39,7 @@ macro_rules! printk {
 
 pub fn kmsg_init() {
     unsafe {
-        KMSG = Some(KernelMessage::default());
+        KMSG = MaybeUninit::new(KernelMessage::default());
     }
 }
 

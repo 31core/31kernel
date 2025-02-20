@@ -1,11 +1,9 @@
-use alloc::boxed::Box;
-use alloc::string::String;
-use alloc::vec::Vec;
-use core::result::Result;
+use alloc::{boxed::Box, string::String, vec::Vec};
+use core::{mem::MaybeUninit, result::Result};
 
 pub type Path = [String];
 
-pub static mut ROOT_VFS: Option<VirtualFileSystem> = None;
+pub static mut ROOT_VFS: MaybeUninit<VirtualFileSystem> = MaybeUninit::uninit();
 
 #[derive(Default)]
 pub struct VirtualFileSystem {
@@ -58,6 +56,7 @@ pub enum FileType {
     Directory,
     CharDev,
     BlockDev,
+    SymbolLink,
 }
 
 pub struct File {
