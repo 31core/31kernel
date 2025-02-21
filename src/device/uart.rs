@@ -16,7 +16,7 @@ pub mod ns16550 {
             let divisor_low: u8 = (divisor & 0xff).try_into().unwrap();
             let divisor_high: u8 = (divisor >> 8).try_into().unwrap();
             let lcr = ptr.add(3).read_volatile();
-            ptr.add(3).write_volatile(lcr | 1 << 7);
+            ptr.add(3).write_volatile(lcr | (1 << 7));
 
             ptr.add(0).write_volatile(divisor_low);
             ptr.add(1).write_volatile(divisor_high);
@@ -26,9 +26,7 @@ pub mod ns16550 {
 
     pub fn put_char(c: u8) {
         let ptr = UART_ADDR as *mut u8;
-        unsafe {
-            ptr.write_volatile(c);
-        }
+        unsafe { ptr.write_volatile(c) };
     }
 
     pub fn print_str(s: &str) {

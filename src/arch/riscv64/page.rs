@@ -1,4 +1,4 @@
-use alloc::alloc::{alloc_zeroed, dealloc, Layout};
+use alloc::alloc::{Layout, alloc_zeroed, dealloc};
 use core::arch::asm;
 
 use crate::page::{PageACL, PageManagement};
@@ -14,13 +14,17 @@ pub const MODE_SV39: u64 = 8;
  */
 pub unsafe fn set_satp(mut ppn: u64, mode: u64) {
     ppn |= mode << 60;
-    asm!("csrw satp, {}", in(reg) ppn);
-    asm!("sfence.vma")
+    unsafe {
+        asm!("csrw satp, {}", in(reg) ppn);
+        asm!("sfence.vma")
+    }
 }
 
 pub unsafe fn get_satp() -> u64 {
     let mut satp;
-    asm!("csrr {}, satp", out(reg) satp);
+    unsafe {
+        asm!("csrr {}, satp", out(reg) satp);
+    }
 
     satp
 }
@@ -101,7 +105,7 @@ pub struct PageDtrectory {
 impl PageDtrectory {
     unsafe fn from_ppn(ppn: u64) -> Self {
         Self {
-            ptes: core::slice::from_raw_parts_mut((ppn << 12) as *mut u64, 512),
+            ptes: unsafe { core::slice::from_raw_parts_mut((ppn << 12) as *mut u64, 512) },
         }
     }
     pub fn set_pte(&mut self, count: usize, pte: PageTableEntry) {
@@ -125,15 +129,19 @@ pub struct PageManager {
 
 impl PageManager {
     pub unsafe fn new() -> Self {
-        let root_pdir = Self::alloc_page_dir();
-        Self {
-            root: PageDtrectory::from_ppn(root_pdir),
+        unsafe {
+            let root_pdir = Self::alloc_page_dir();
+            Self {
+                root: PageDtrectory::from_ppn(root_pdir),
+            }
         }
     }
     pub unsafe fn from_satp() -> Self {
-        let addr = get_satp() & 0xfffffffffff;
-        Self {
-            root: PageDtrectory::from_ppn(addr),
+        unsafe {
+            let addr = get_satp() & 0xfffffffffff;
+            Self {
+                root: PageDtrectory::from_ppn(addr),
+            }
         }
     }
     /** Allocate a page directory.
@@ -141,11 +149,13 @@ impl PageManager {
      * Return: Pysical Page Number
      */
     pub unsafe fn alloc_page_dir() -> u64 {
-        alloc_zeroed(Layout::new::<[u8; 4096]>()) as u64 >> 12
+        unsafe { alloc_zeroed(Layout::new::<[u8; 4096]>()) as u64 >> 12 }
     }
     /** Release a page directory. */
     pub unsafe fn release_page_dir(ppn: u64) {
-        dealloc((ppn << 12) as *mut u8, Layout::new::<[u8; 4096]>());
+        unsafe {
+            dealloc((ppn << 12) as *mut u8, Layout::new::<[u8; 4096]>());
+        }
     }
     pub fn root_ppn(&self) -> u64 {
         self.root.ptes.as_ptr() as u64 >> 12
@@ -171,7 +181,7 @@ impl PageManagement for PageManager {
         let v1_pte = self.root.ptes[v1];
         let v1_pte = if v1_pte == 0 {
             /* v1 PTE is empty */
-            let ppn = Self::alloc_page_dir();
+            let ppn = unsafe { Self::alloc_page_dir() };
             let pte = PageTableEntry {
                 ppn,
                 ..Default::default()
@@ -183,11 +193,11 @@ impl PageManagement for PageManager {
             v1_pte.into()
         };
 
-        let mut v2_pdir = PageDtrectory::from_ppn(v1_pte.ppn);
+        let mut v2_pdir = unsafe { PageDtrectory::from_ppn(v1_pte.ppn) };
         let v2_pte = v2_pdir.ptes[v2];
         let v2_pte = if v2_pte == 0 {
             /* v2 PTE is empty */
-            let ppn = Self::alloc_page_dir();
+            let ppn = unsafe { Self::alloc_page_dir() };
             let pte = PageTableEntry {
                 ppn,
                 ..Default::default()
@@ -199,7 +209,7 @@ impl PageManagement for PageManager {
             v2_pte.into()
         };
 
-        let mut v3_pdir = PageDtrectory::from_ppn(v2_pte.ppn);
+        let mut v3_pdir = unsafe { PageDtrectory::from_ppn(v2_pte.ppn) };
         let v3_pte = v3_pdir.ptes[v3];
         let mut v3_pte: PageTableEntry = v3_pte.into();
         v3_pte.ppn = ppn as u64;
@@ -214,22 +224,28 @@ impl PageManagement for PageManager {
         let v3 = vpn & 0x1ff;
 
         let v1_pte: PageTableEntry = self.root.ptes[v1].into();
-        let v2_pdir = PageDtrectory::from_ppn(v1_pte.ppn);
+        let v2_pdir = unsafe { PageDtrectory::from_ppn(v1_pte.ppn) };
         let v2_pte: PageTableEntry = v2_pdir.ptes[v2].into();
-        let v3_pdir = PageDtrectory::from_ppn(v2_pte.ppn);
+        let v3_pdir = unsafe { PageDtrectory::from_ppn(v2_pte.ppn) };
         v3_pdir.ptes[v3] = 0;
 
         if v3_pdir.is_empty() {
-            Self::release_page_dir(v2_pte.ppn);
+            unsafe {
+                Self::release_page_dir(v2_pte.ppn);
+            }
             v2_pdir.ptes[v2] = 0;
         }
 
         if v2_pdir.is_empty() {
-            Self::release_page_dir(v1_pte.ppn);
+            unsafe {
+                Self::release_page_dir(v1_pte.ppn);
+            }
             self.root.ptes[v1] = 0;
         }
     }
     unsafe fn switch_to(&self) {
-        set_satp(self.root_ppn(), MODE_SV39);
+        unsafe {
+            set_satp(self.root_ppn(), MODE_SV39);
+        }
     }
 }

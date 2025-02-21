@@ -1,9 +1,10 @@
 [package]
 name = "kernel"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["31core <31core@tutanota.com>"]
 license-file = "LICENSE"
 
 [dependencies]
-crypto_framework = { path = "crypto_framework" }
+aes = { path = "crypto/aes" }
+crypto_framework = { path = "crypto/crypto_framework" }

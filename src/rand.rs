@@ -19,8 +19,8 @@ pub static mut GLOBAL_RNG: MaybeUninit<MT19937> = MaybeUninit::uninit();
 
 const SEED: u32 = 0;
 
-pub unsafe fn rand_init() {
-    GLOBAL_RNG = MaybeUninit::new(MT19937::new(SEED));
+pub fn rand_init() {
+    unsafe { GLOBAL_RNG = MaybeUninit::new(MT19937::new(SEED)) };
 }
 
 pub trait RandomGenerator {

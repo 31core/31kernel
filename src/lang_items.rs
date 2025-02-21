@@ -3,7 +3,7 @@ use core::panic::PanicInfo;
 
 use crate::{
     kernel_wait,
-    kmsg::{KernelMessageLevel, KMSG},
+    kmsg::{KMSG, KernelMessageLevel},
 };
 
 #[panic_handler]

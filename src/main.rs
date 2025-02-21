@@ -34,7 +34,7 @@ use vfs::VirtualFileSystem;
 
 extern crate alloc;
 
-extern "C" {
+unsafe extern "C" {
     pub fn kernel_start();
     pub fn kernel_end();
     pub fn heap_start();
@@ -51,7 +51,7 @@ global_asm!(include_str!("arch/riscv64/entry.S"));
 #[cfg(target_arch = "aarch64")]
 global_asm!(include_str!("arch/arm64/entry.S"));
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() {
     clear_bss();
     unsafe {
@@ -77,7 +77,7 @@ pub extern "C" fn kernel_main() {
 }
 
 fn clear_bss() {
-    extern "C" {
+    unsafe extern "C" {
         fn bss_start();
         fn bss_end();
     }

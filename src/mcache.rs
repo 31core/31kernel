@@ -1,6 +1,6 @@
 use crate::{
-    malloc::{ceil_to_power_2, BUDDY_ALLOCATOR},
     PAGE_SIZE,
+    malloc::{BUDDY_ALLOCATOR, ceil_to_power_2},
 };
 
 use alloc::boxed::Box;
@@ -61,14 +61,18 @@ impl CachePage {
     /** Initialize cache on pages. */
     unsafe fn init(&mut self) {
         for i in 0..self.obj_free - 1 {
-            (self.page_start.add(i * self.obj_size) as *mut usize)
-                .write(self.page_start.add((i + 1) * self.obj_size) as usize);
+            unsafe {
+                (self.page_start.add(i * self.obj_size) as *mut usize)
+                    .write(self.page_start.add((i + 1) * self.obj_size) as usize);
+            }
         }
 
-        (self
-            .page_start
-            .add(self.page_num * PAGE_SIZE - self.obj_size) as *mut usize)
-            .write(0);
+        unsafe {
+            (self
+                .page_start
+                .add(self.page_num * PAGE_SIZE - self.obj_size) as *mut usize)
+                .write(0);
+        }
     }
     unsafe fn alloc_obj(&mut self) -> Option<*mut u8> {
         if self.obj_free == 0 {
@@ -78,53 +82,59 @@ impl CachePage {
         self.obj_free -= 1;
         self.obj_alloc += 1;
         let mut next_ptr = self.obj_start as *const usize;
-        if *next_ptr == 0 {
-            return Some(self.obj_start);
+        unsafe {
+            if *next_ptr == 0 {
+                return Some(self.obj_start);
+            }
         }
 
         let mut prev_ptr;
         loop {
             prev_ptr = next_ptr;
-            next_ptr = *next_ptr as *const usize;
+            next_ptr = unsafe { *next_ptr as *const usize };
 
-            if *next_ptr == 0 {
-                (prev_ptr as *mut usize).write(0);
-                return Some(next_ptr as *mut u8);
+            unsafe {
+                if *next_ptr == 0 {
+                    (prev_ptr as *mut usize).write(0);
+                    return Some(next_ptr as *mut u8);
+                }
             }
         }
     }
     unsafe fn free_obj(&mut self, ptr: *mut u8) {
-        self.obj_alloc -= 1;
+        unsafe {
+            self.obj_alloc -= 1;
 
-        if self.obj_free == 0 {
-            self.obj_free += 1;
-            self.obj_start = ptr;
-            (ptr as *mut usize).write(0);
-            return;
-        }
-
-        self.obj_free += 1;
-
-        if (ptr as usize) < self.obj_start as usize {
-            (ptr as *mut usize).write(self.obj_start as usize);
-            self.obj_start = ptr;
-            return;
-        }
-
-        let mut next_ptr = self.obj_start as *const usize;
-        loop {
-            if (next_ptr as usize) < ptr as usize && *next_ptr > ptr as usize {
-                (ptr as *mut usize).write(*next_ptr);
-                (next_ptr as *mut usize).write(ptr as usize);
-                return;
-            }
-            if *next_ptr == 0 {
-                (next_ptr as *mut usize).write(ptr as usize);
+            if self.obj_free == 0 {
+                self.obj_free += 1;
+                self.obj_start = ptr;
                 (ptr as *mut usize).write(0);
                 return;
             }
 
-            next_ptr = *next_ptr as *const usize;
+            self.obj_free += 1;
+
+            if (ptr as usize) < self.obj_start as usize {
+                (ptr as *mut usize).write(self.obj_start as usize);
+                self.obj_start = ptr;
+                return;
+            }
+
+            let mut next_ptr = self.obj_start as *const usize;
+            loop {
+                if (next_ptr as usize) < ptr as usize && *next_ptr > ptr as usize {
+                    (ptr as *mut usize).write(*next_ptr);
+                    (next_ptr as *mut usize).write(ptr as usize);
+                    return;
+                }
+                if *next_ptr == 0 {
+                    (next_ptr as *mut usize).write(ptr as usize);
+                    (ptr as *mut usize).write(0);
+                    return;
+                }
+
+                next_ptr = *next_ptr as *const usize;
+            }
         }
     }
 }
@@ -163,77 +173,82 @@ impl CacheManager {
 
 unsafe impl GlobalAlloc for CacheManager {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if !GLOBAL_ALLOCATOR.is_init {
-            GLOBAL_ALLOCATOR.is_init = true;
-            GLOBAL_ALLOCATOR.next = Some(Box::new(Self::default()));
-        }
+        unsafe {
+            if !GLOBAL_ALLOCATOR.is_init {
+                GLOBAL_ALLOCATOR.is_init = true;
+                GLOBAL_ALLOCATOR.next = Some(Box::new(Self::default()));
+            }
 
-        /* allocate with cache manager */
-        if let Some(obj_size) = to_objsize(layout.size()) {
-            for cache in GLOBAL_ALLOCATOR.caches.into_iter().flatten() {
-                if (*cache).obj_size == obj_size {
-                    if let Some(addr) = (*cache).alloc_obj() {
-                        return addr;
+            /* allocate with cache manager */
+            if let Some(obj_size) = to_objsize(layout.size()) {
+                for cache in GLOBAL_ALLOCATOR.caches.into_iter().flatten() {
+                    if (*cache).obj_size == obj_size {
+                        if let Some(addr) = (*cache).alloc_obj() {
+                            return addr;
+                        }
                     }
                 }
-            }
-            if !GLOBAL_ALLOCATOR.is_cache_full {
-                /* add a new cache */
-                let page_count = ceil_to_power_2(CACHE_OBJ_COUNT * obj_size / PAGE_SIZE);
-                let offset = core::mem::size_of::<CachePage>().div_ceil(obj_size);
-                let cache_addr =
-                    (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_count) as *mut CachePage;
-                let mut cache = CachePage {
-                    page_start: cache_addr as *mut u8,
-                    page_num: page_count,
-                    obj_size,
-                    obj_alloc: 0,
-                    obj_free: page_count * PAGE_SIZE / obj_size - offset,
-                    obj_start: (cache_addr).byte_add(offset * obj_size) as *mut u8,
-                };
-                cache.init();
-                let addr = cache.alloc_obj().unwrap();
-                cache_addr.write(cache);
+                if !GLOBAL_ALLOCATOR.is_cache_full {
+                    /* add a new cache */
+                    let page_count = ceil_to_power_2(CACHE_OBJ_COUNT * obj_size / PAGE_SIZE);
+                    let offset = core::mem::size_of::<CachePage>().div_ceil(obj_size);
+                    let cache_addr =
+                        (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_count) as *mut CachePage;
+                    let mut cache = CachePage {
+                        page_start: cache_addr as *mut u8,
+                        page_num: page_count,
+                        obj_size,
+                        obj_alloc: 0,
+                        obj_free: page_count * PAGE_SIZE / obj_size - offset,
+                        obj_start: (cache_addr).byte_add(offset * obj_size) as *mut u8,
+                    };
+                    cache.init();
+                    let addr = cache.alloc_obj().unwrap();
+                    cache_addr.write(cache);
 
-                (*(&raw mut GLOBAL_ALLOCATOR)).add_cache(cache_addr);
-                addr
-            } else {
-                (*(&raw mut GLOBAL_ALLOCATOR))
-                    .next
-                    .as_mut()
-                    .unwrap()
-                    .alloc(layout)
+                    (*(&raw mut GLOBAL_ALLOCATOR)).add_cache(cache_addr);
+                    addr
+                } else {
+                    (*(&raw mut GLOBAL_ALLOCATOR))
+                        .next
+                        .as_mut()
+                        .unwrap()
+                        .alloc(layout)
+                }
             }
-        }
-        /* use buddy allocator for large object */
-        else {
-            (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(ceil_to_power_2(layout.size() / PAGE_SIZE))
+            /* use buddy allocator for large object */
+            else {
+                (*(&raw mut BUDDY_ALLOCATOR))
+                    .alloc_pages(ceil_to_power_2(layout.size() / PAGE_SIZE))
+            }
         }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if to_objsize(layout.size()).is_some() {
-            for i in &mut (*(&raw mut GLOBAL_ALLOCATOR)).caches {
-                if let Some(cache) = *i {
-                    if (ptr as usize) >= (*cache).page_start as usize
-                        && (ptr as usize)
-                            < (*cache).page_start.add((*cache).page_num * PAGE_SIZE) as usize
-                    {
-                        (*cache).free_obj(ptr);
+        unsafe {
+            if to_objsize(layout.size()).is_some() {
+                for i in &mut (*(&raw mut GLOBAL_ALLOCATOR)).caches {
+                    if let Some(cache) = *i {
+                        if (ptr as usize) >= (*cache).page_start as usize
+                            && (ptr as usize)
+                                < (*cache).page_start.add((*cache).page_num * PAGE_SIZE) as usize
+                        {
+                            (*cache).free_obj(ptr);
 
-                        /* free object cache */
-                        if (*cache).obj_alloc == 0 {
-                            (*(&raw mut BUDDY_ALLOCATOR))
-                                .free_pages((*cache).page_start, (*cache).page_num);
-                            *i = None;
-                            GLOBAL_ALLOCATOR.is_cache_full = false;
+                            /* free object cache */
+                            if (*cache).obj_alloc == 0 {
+                                (*(&raw mut BUDDY_ALLOCATOR))
+                                    .free_pages((*cache).page_start, (*cache).page_num);
+                                *i = None;
+                                GLOBAL_ALLOCATOR.is_cache_full = false;
+                            }
+                            return;
                         }
-                        return;
                     }
                 }
+            } else {
+                (*(&raw mut BUDDY_ALLOCATOR))
+                    .free_pages(ptr, ceil_to_power_2(layout.size() / PAGE_SIZE));
             }
-        } else {
-            (*(&raw mut BUDDY_ALLOCATOR))
-                .free_pages(ptr, ceil_to_power_2(layout.size() / PAGE_SIZE));
         }
     }
 }

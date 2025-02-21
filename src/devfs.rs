@@ -5,9 +5,9 @@ use alloc::{
 };
 
 use crate::{
-    rand::{RandomGenerator, GLOBAL_RNG},
-    vfs::*,
     KMSG,
+    rand::{GLOBAL_RNG, RandomGenerator},
+    vfs::*,
 };
 use core::result::Result;
 

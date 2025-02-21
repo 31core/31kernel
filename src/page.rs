@@ -1,4 +1,4 @@
-use crate::{kernel_end, kernel_start, PAGE_SIZE, STACK_SIZE};
+use crate::{PAGE_SIZE, STACK_SIZE, kernel_end, kernel_start};
 
 pub enum PageACL {
     Read,
@@ -20,19 +20,19 @@ pub trait PageManagement {
      * Map as read-only acl
      */
     unsafe fn map_rodata(&mut self, vpn: usize, ppn: usize) {
-        self.map(vpn, ppn, &[PageACL::Read]);
+        unsafe { self.map(vpn, ppn, &[PageACL::Read]) };
     }
     /**
      * Map as read-write acl
      */
     unsafe fn map_data(&mut self, vpn: usize, ppn: usize) {
-        self.map(vpn, ppn, &[PageACL::Read, PageACL::Write]);
+        unsafe { self.map(vpn, ppn, &[PageACL::Read, PageACL::Write]) };
     }
     /**
      * Map as read-execute acl
      */
     unsafe fn map_text(&mut self, vpn: usize, ppn: usize) {
-        self.map(vpn, ppn, &[PageACL::Read, PageACL::Execute]);
+        unsafe { self.map(vpn, ppn, &[PageACL::Read, PageACL::Execute]) };
     }
     /**
      * Unset the map.
@@ -49,17 +49,21 @@ pub trait PageManagement {
     unsafe fn map_kernel_region(&mut self) {
         /* set kernel stack */
         for i in 0..STACK_SIZE / PAGE_SIZE {
-            self.map_data(
-                (crate::heap_start as usize + i) >> 12,
-                (crate::heap_start as usize + i) >> 12,
-            );
+            unsafe {
+                self.map_data(
+                    (crate::heap_start as usize + i) >> 12,
+                    (crate::heap_start as usize + i) >> 12,
+                );
+            }
         }
         /* set kernel code */
         for i in 0..(kernel_end as usize - kernel_start as usize) / PAGE_SIZE {
-            self.map_text(
-                (crate::kernel_start as usize + i) >> 12,
-                (crate::kernel_start as usize + i) >> 12,
-            );
+            unsafe {
+                self.map_text(
+                    (crate::kernel_start as usize + i) >> 12,
+                    (crate::kernel_start as usize + i) >> 12,
+                );
+            }
         }
     }
 }

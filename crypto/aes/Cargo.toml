@@ -1,0 +1,8 @@
+[package]
+name = "aes"
+version = "0.1.0"
+edition = "2024"
+description = "Software implementation of AES algorithm."
+
+[dependencies]
+crypto_framework = { path = "../crypto_framework" }
