@@ -5,16 +5,13 @@
 
 /// Architecture related code
 mod arch;
-/// dev filesystem usually mounted on `/dev`
+mod buddy_allocator;
 mod devfs;
 /// Generic device drivers
 mod device;
-/// Kernel debug message
 mod kmsg;
 mod lang_items;
-mod malloc;
 mod mcache;
-/// Common code for page management
 mod page;
 /// Random generators
 mod rand;
@@ -22,14 +19,13 @@ mod syscall;
 mod task;
 mod vfs;
 
+use alloc::{boxed::Box, string::String};
 use core::{
     arch::{asm, global_asm},
     mem::MaybeUninit,
 };
-
-use alloc::{boxed::Box, string::String};
 use devfs::DevFS;
-use kmsg::{kmsg_init, KMSG};
+use kmsg::{KMSG, kmsg_init};
 use vfs::VirtualFileSystem;
 
 extern crate alloc;
@@ -55,7 +51,8 @@ global_asm!(include_str!("arch/arm64/entry.S"));
 pub extern "C" fn kernel_main() {
     clear_bss();
     unsafe {
-        (*(&raw mut malloc::BUDDY_ALLOCATOR)).init(heap_start as usize, MEM_SIZE / PAGE_SIZE);
+        (*(&raw mut buddy_allocator::BUDDY_ALLOCATOR))
+            .init(heap_start as usize, MEM_SIZE / PAGE_SIZE);
         rand::rand_init();
         vfs::ROOT_VFS = MaybeUninit::new(VirtualFileSystem::default());
         (*(&raw mut vfs::ROOT_VFS))

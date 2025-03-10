@@ -1,13 +1,14 @@
-use alloc::{
-    collections::BTreeMap,
-    string::{String, ToString},
-    vec::Vec,
-};
+//! dev filesystem usually mounted on `/dev`
 
 use crate::{
     KMSG,
     rand::{GLOBAL_RNG, RandomGenerator},
-    vfs::*,
+    vfs::{File, FileSystem, FileType, Path},
+};
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+    vec::Vec,
 };
 use core::result::Result;
 

@@ -1,3 +1,5 @@
+//! Common code for page management
+
 use crate::{PAGE_SIZE, STACK_SIZE, kernel_end, kernel_start};
 
 pub enum PageACL {

@@ -1,10 +1,9 @@
 use crate::{
     PAGE_SIZE,
-    malloc::{BUDDY_ALLOCATOR, ceil_to_power_2},
+    buddy_allocator::{BUDDY_ALLOCATOR, ceil_to_power_2},
 };
-
 use alloc::boxed::Box;
-use core::{alloc::GlobalAlloc, alloc::Layout};
+use core::alloc::{GlobalAlloc, Layout};
 
 const CACHE_NUM: usize = 1024;
 const CACHE_OBJ_COUNT: usize = 512;

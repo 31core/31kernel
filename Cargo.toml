@@ -6,5 +6,6 @@ authors = ["31core <31core@tutanota.com>"]
 license-file = "LICENSE"
 
 [dependencies]
+# cryptograthy libraries
 aes = { path = "crypto/aes" }
 crypto_framework = { path = "crypto/crypto_framework" }

@@ -1,3 +1,5 @@
+//! Kernel debug message
+
 use alloc::{
     borrow::ToOwned,
     string::{String, ToString},

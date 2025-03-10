@@ -1,7 +1,7 @@
 use crate::PAGE_SIZE;
 
 macro_rules! power_2 {
-    ($pow: expr) => {
+    ($pow:expr) => {
         1 << $pow
     };
 }
