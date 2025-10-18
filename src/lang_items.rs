@@ -9,9 +9,15 @@ use crate::{
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     unsafe {
-        (*(&raw mut KMSG))
-            .assume_init_mut()
-            .add_message(KernelMessageLevel::Fatal, &format!("{}\n", info.message()));
+        match info.location() {
+            Some(location) => (*(&raw mut KMSG)).assume_init_mut().add_message(
+                KernelMessageLevel::Fatal,
+                &format!("{} at {}\n", info.message(), location),
+            ),
+            None => (*(&raw mut KMSG))
+                .assume_init_mut()
+                .add_message(KernelMessageLevel::Fatal, &format!("{}\n", info.message())),
+        }
     }
 
     loop {

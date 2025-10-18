@@ -13,6 +13,7 @@ pub static mut KMSG: MaybeUninit<KernelMessage> = MaybeUninit::uninit();
 macro_rules! printk_error {
     ($($arg: tt)*) => {
         {
+            #[allow(unused_unsafe)]
             let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
             kmsg.error(&alloc::format!($($arg)*));
         }
@@ -23,6 +24,7 @@ macro_rules! printk_error {
 macro_rules! printk_warning {
     ($($arg: tt)*) => {
         {
+            #[allow(unused_unsafe)]
             let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
             kmsg.warning(&alloc::format!($($arg)*));
         }
@@ -33,6 +35,7 @@ macro_rules! printk_warning {
 macro_rules! printk {
     ($($arg: tt)*) => {
         {
+            #[allow(unused_unsafe)]
             let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
             kmsg.debug(&alloc::format!($($arg)*));
         }
