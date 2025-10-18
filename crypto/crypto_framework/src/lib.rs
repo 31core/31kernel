@@ -20,7 +20,7 @@ pub trait Hash {
     where
         Self: Sized;
     fn update(&mut self, message: &[u8]);
-    fn digest(&self, sum: &mut [u8]);
+    fn digest(&mut self, sum: &mut [u8]);
 }
 
 /**
@@ -69,6 +69,8 @@ where
         self.ihasher.update(message);
     }
     pub fn digest(&mut self, sum: &mut [u8]) {
+        assert_eq!(sum.len(), H::digest_length());
+
         self.ihasher.digest(sum);
         self.ohasher.update(sum);
         self.ohasher.digest(sum);

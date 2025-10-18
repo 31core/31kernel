@@ -53,8 +53,8 @@ pub trait PageManagement {
         for i in 0..STACK_SIZE / PAGE_SIZE {
             unsafe {
                 self.map_data(
-                    (crate::heap_start as usize + i) >> 12,
-                    (crate::heap_start as usize + i) >> 12,
+                    (crate::heap_start as usize) >> 12 + i,
+                    (crate::heap_start as usize) >> 12 + i,
                 );
             }
         }
@@ -62,8 +62,8 @@ pub trait PageManagement {
         for i in 0..(kernel_end as usize - kernel_start as usize) / PAGE_SIZE {
             unsafe {
                 self.map_text(
-                    (crate::kernel_start as usize + i) >> 12,
-                    (crate::kernel_start as usize + i) >> 12,
+                    (crate::kernel_start as usize) >> 12 + i,
+                    (crate::kernel_start as usize) >> 12 + i,
                 );
             }
         }

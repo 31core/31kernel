@@ -9,3 +9,4 @@ license-file = "LICENSE"
 # cryptograthy libraries
 aes = { path = "crypto/aes" }
 crypto_framework = { path = "crypto/crypto_framework" }
+sha2 = { path = "crypto/sha2" }

@@ -11,7 +11,8 @@
 
 ## Source tree structure
 
-|Directory|Description|
-|---------|-----------|
-|arch     |Architecture related code.|
-|device   |Device drivers.|
+|Directory |Description|
+|----------|-----------|
+|crypto    |Cryptographic algorithm implementations.|
+|src/arch  |Architecture related code.|
+|src/device|Device drivers.|
