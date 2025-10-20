@@ -1,11 +1,21 @@
 //! Common code for page management
 
-use crate::{PAGE_SIZE, STACK_SIZE, kernel_end, kernel_start};
+use crate::PAGE_SIZE;
 
 pub enum PageACL {
     Read,
     Write,
     Execute,
+}
+
+macro_rules! map_range {
+    ($start:expr, $end:expr, $mgr:expr, $map_fn:ident) => {
+        for i in 0..($end as usize - $start as usize) / PAGE_SIZE {
+            unsafe {
+                $mgr.$map_fn(($start as usize >> 12) + i, ($start as usize >> 12) + i);
+            }
+        }
+    };
 }
 
 pub trait PageManagement {
@@ -49,23 +59,13 @@ pub trait PageManagement {
     unsafe fn switch_to(&self);
     /** map kernel memory into vm */
     unsafe fn map_kernel_region(&mut self) {
-        /* set kernel stack */
-        for i in 0..STACK_SIZE / PAGE_SIZE {
-            unsafe {
-                self.map_data(
-                    (crate::heap_start as usize) >> 12 + i,
-                    (crate::heap_start as usize) >> 12 + i,
-                );
-            }
-        }
-        /* set kernel code */
-        for i in 0..(kernel_end as usize - kernel_start as usize) / PAGE_SIZE {
-            unsafe {
-                self.map_text(
-                    (crate::kernel_start as usize) >> 12 + i,
-                    (crate::kernel_start as usize) >> 12 + i,
-                );
-            }
-        }
+        /* map .rodata */
+        map_range!(crate::rodata_start, crate::rodata_end, self, map_rodata);
+        /* map .data */
+        map_range!(crate::data_start, crate::data_end, self, map_data);
+        /* map .bss */
+        map_range!(crate::bss_start, crate::bss_end, self, map_data);
+        /* set kernel code (.text) */
+        map_range!(crate::kernel_start, crate::kernel_end, self, map_text);
     }
 }

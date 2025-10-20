@@ -30,14 +30,20 @@ use vfs::VirtualFileSystem;
 
 extern crate alloc;
 
+/* segments */
 unsafe extern "C" {
     pub fn kernel_start();
     pub fn kernel_end();
+    pub fn rodata_start();
+    pub fn rodata_end();
+    pub fn data_start();
+    pub fn data_end();
+    pub fn bss_start();
+    pub fn bss_end();
     pub fn heap_start();
 }
 
 const MEM_SIZE: usize = 128 * 1024 * 1024;
-const STACK_SIZE: usize = 16 * 4096;
 const PAGE_SIZE: usize = 4096;
 const PTR_BYTES: usize = size_of::<usize>();
 
@@ -74,11 +80,6 @@ pub extern "C" fn kernel_main() {
 }
 
 fn clear_bss() {
-    unsafe extern "C" {
-        fn bss_start();
-        fn bss_end();
-    }
-
     unsafe {
         core::ptr::write_bytes(
             bss_start as *mut u8,

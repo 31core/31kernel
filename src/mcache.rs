@@ -181,10 +181,10 @@ unsafe impl GlobalAlloc for CacheManager {
             /* allocate with cache manager */
             if let Some(obj_size) = to_objsize(layout.size()) {
                 for cache in GLOBAL_ALLOCATOR.caches.into_iter().flatten() {
-                    if (*cache).obj_size == obj_size {
-                        if let Some(addr) = (*cache).alloc_obj() {
-                            return addr;
-                        }
+                    if (*cache).obj_size == obj_size
+                        && let Some(addr) = (*cache).alloc_obj()
+                    {
+                        return addr;
                     }
                 }
                 if !GLOBAL_ALLOCATOR.is_cache_full {
@@ -226,22 +226,21 @@ unsafe impl GlobalAlloc for CacheManager {
         unsafe {
             if to_objsize(layout.size()).is_some() {
                 for i in &mut (*(&raw mut GLOBAL_ALLOCATOR)).caches {
-                    if let Some(cache) = *i {
-                        if (ptr as usize) >= (*cache).page_start as usize
-                            && (ptr as usize)
-                                < (*cache).page_start.add((*cache).page_num * PAGE_SIZE) as usize
-                        {
-                            (*cache).free_obj(ptr);
+                    if let Some(cache) = *i
+                        && (ptr as usize) >= (*cache).page_start as usize
+                        && (ptr as usize)
+                            < (*cache).page_start.add((*cache).page_num * PAGE_SIZE) as usize
+                    {
+                        (*cache).free_obj(ptr);
 
-                            /* free object cache */
-                            if (*cache).obj_alloc == 0 {
-                                (*(&raw mut BUDDY_ALLOCATOR))
-                                    .free_pages((*cache).page_start, (*cache).page_num);
-                                *i = None;
-                                GLOBAL_ALLOCATOR.is_cache_full = false;
-                            }
-                            return;
+                        /* free object cache */
+                        if (*cache).obj_alloc == 0 {
+                            (*(&raw mut BUDDY_ALLOCATOR))
+                                .free_pages((*cache).page_start, (*cache).page_num);
+                            *i = None;
+                            GLOBAL_ALLOCATOR.is_cache_full = false;
                         }
+                        return;
                     }
                 }
             } else {

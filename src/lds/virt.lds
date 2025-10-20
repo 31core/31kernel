@@ -8,28 +8,34 @@ SECTIONS
     .text : {
         *(.text.entry)
         . = ALIGN(4);
-        . = ALIGN(4);
         *(.text.strap)
         *(.text .text.*)
     }
-    kernel_end = .;
 
     . = ALIGN(4K);
+    kernel_end = .;
+    rodata_start = .;
+
     .rodata : {
         *(.rodata .rodata.*)
         *(.srodata .srodata.*)
     }
 
     . = ALIGN(4K);
+    rodata_end = .;
+    data_start = .;
+
     .data : {
         *(.data .data.*)
         *(.sdata .sdata.*)
     }
 
     . = ALIGN(4K);
+    data_end = .;
+    bss_start = .;
+
     .bss : {
         *(.bss.stack)
-        bss_start = .;
         *(.bss .bss.*)
         *(.sbss .sbss.*)
     }
