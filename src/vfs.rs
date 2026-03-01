@@ -1,9 +1,19 @@
+use crate::devfs::DevFS;
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::{mem::MaybeUninit, result::Result};
 
 pub type Path = [String];
 
 pub static mut ROOT_VFS: MaybeUninit<VirtualFileSystem> = MaybeUninit::uninit();
+
+pub fn vfs_init() {
+    unsafe {
+        ROOT_VFS = MaybeUninit::new(VirtualFileSystem::default());
+        (*(&raw mut ROOT_VFS))
+            .assume_init_mut()
+            .mount(Box::<DevFS>::default(), &[String::from("dev")]);
+    }
+}
 
 #[derive(Default)]
 pub struct VirtualFileSystem {
