@@ -191,8 +191,9 @@ unsafe impl GlobalAlloc for CacheManager {
                     /* add a new cache */
                     let page_count = ceil_to_power_2(CACHE_OBJ_COUNT * obj_size / PAGE_SIZE);
                     let offset = core::mem::size_of::<CachePage>().div_ceil(obj_size);
-                    let cache_addr =
-                        (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_count) as *mut CachePage;
+                    let cache_addr = (PAGE_SIZE
+                        * (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_count))
+                        as *mut CachePage;
                     let mut cache = CachePage {
                         page_start: cache_addr as *mut u8,
                         page_num: page_count,
@@ -217,8 +218,10 @@ unsafe impl GlobalAlloc for CacheManager {
             }
             /* use buddy allocator for large object */
             else {
-                (*(&raw mut BUDDY_ALLOCATOR))
-                    .alloc_pages(ceil_to_power_2(layout.size() / PAGE_SIZE))
+                (PAGE_SIZE
+                    * (*(&raw mut BUDDY_ALLOCATOR))
+                        .alloc_pages(ceil_to_power_2(layout.size() / PAGE_SIZE)))
+                    as *mut u8
             }
         }
     }
@@ -235,8 +238,10 @@ unsafe impl GlobalAlloc for CacheManager {
 
                         /* free object cache */
                         if (*cache).obj_alloc == 0 {
-                            (*(&raw mut BUDDY_ALLOCATOR))
-                                .free_pages((*cache).page_start, (*cache).page_num);
+                            (*(&raw mut BUDDY_ALLOCATOR)).free_pages(
+                                (*cache).page_start as usize / PAGE_SIZE,
+                                (*cache).page_num,
+                            );
                             *i = None;
                             GLOBAL_ALLOCATOR.is_cache_full = false;
                         }
@@ -244,8 +249,10 @@ unsafe impl GlobalAlloc for CacheManager {
                     }
                 }
             } else {
-                (*(&raw mut BUDDY_ALLOCATOR))
-                    .free_pages(ptr, ceil_to_power_2(layout.size() / PAGE_SIZE));
+                (*(&raw mut BUDDY_ALLOCATOR)).free_pages(
+                    ptr as usize / PAGE_SIZE,
+                    ceil_to_power_2(layout.size() / PAGE_SIZE),
+                );
             }
         }
     }

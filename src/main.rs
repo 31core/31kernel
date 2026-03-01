@@ -57,8 +57,10 @@ global_asm!(include_str!("arch/arm64/entry.S"));
 pub extern "C" fn kernel_main() {
     clear_bss();
     unsafe {
-        (*(&raw mut buddy_allocator::BUDDY_ALLOCATOR))
-            .init(heap_start as usize, MEM_SIZE / PAGE_SIZE);
+        (*(&raw mut buddy_allocator::BUDDY_ALLOCATOR)).init(
+            heap_start as *const usize as usize / PAGE_SIZE,
+            MEM_SIZE / PAGE_SIZE,
+        );
         rand::rand_init();
         vfs::ROOT_VFS = MaybeUninit::new(VirtualFileSystem::default());
         (*(&raw mut vfs::ROOT_VFS))
@@ -84,7 +86,7 @@ fn clear_bss() {
         core::ptr::write_bytes(
             bss_start as *mut u8,
             0,
-            bss_end as usize - bss_start as usize,
+            bss_end as *const usize as usize - bss_start as *const usize as usize,
         );
     }
 }

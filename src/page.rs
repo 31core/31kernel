@@ -10,9 +10,12 @@ pub enum PageACL {
 
 macro_rules! map_range {
     ($start:expr, $end:expr, $mgr:expr, $map_fn:ident) => {
-        for i in 0..($end as usize - $start as usize) / PAGE_SIZE {
+        for i in 0..($end as *const usize as usize - $start as *const usize as usize) / PAGE_SIZE {
             unsafe {
-                $mgr.$map_fn(($start as usize >> 12) + i, ($start as usize >> 12) + i);
+                $mgr.$map_fn(
+                    ($start as *const usize as usize >> 12) + i,
+                    ($start as *const usize as usize >> 12) + i,
+                );
             }
         }
     };
