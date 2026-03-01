@@ -1,7 +1,9 @@
-//! dev filesystem usually mounted on `/dev`
+/*!
+ * devfs filesystem usually mounted on `/dev`
+ */
 
 use crate::{
-    KMSG,
+    kmsg::KMSG,
     rand::{GLOBAL_RNG, RandomGenerator},
     vfs::{File, FileSystem, FileType, Path},
 };

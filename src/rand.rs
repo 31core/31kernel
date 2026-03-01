@@ -1,3 +1,7 @@
+/*!
+ *  Random generator abstract and implementations.
+ */
+
 use core::{mem::MaybeUninit, ops::Range};
 
 const N: usize = 624;
