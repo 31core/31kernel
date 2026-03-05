@@ -16,21 +16,30 @@ mod syscall;
 mod task;
 mod vfs;
 
-use core::arch::asm;
+use core::{arch::asm, ptr::addr_of};
 
 extern crate alloc;
 
-/* segments */
+/* segments from linker script */
 unsafe extern "C" {
-    pub fn kernel_start();
-    pub fn kernel_end();
-    pub fn rodata_start();
-    pub fn rodata_end();
-    pub fn data_start();
-    pub fn data_end();
-    pub fn bss_start();
-    pub fn bss_end();
-    pub fn heap_start();
+    #[link_name = "rodata_start"]
+    static RODATA_START: u8;
+    #[link_name = "rodata_end"]
+    static RODATA_END: u8;
+    #[link_name = "data_start"]
+    static DATA_START: u8;
+    #[link_name = "data_end"]
+    static DATA_END: u8;
+    #[link_name = "bss_start"]
+    static BSS_START: u8;
+    #[link_name = "bss_end"]
+    static BSS_END: u8;
+    #[link_name = "kernel_start"]
+    static KERNEL_START: u8;
+    #[link_name = "kernel_end"]
+    static KERNEL_END: u8;
+    #[link_name = "heap_start"]
+    static HEAP_START: u8;
 }
 
 const MEM_SIZE: usize = 128 * 1024 * 1024;
@@ -57,7 +66,7 @@ pub extern "C" fn kernel_main() {
 
     unsafe {
         (*(&raw mut buddy_allocator::BUDDY_ALLOCATOR)).init(
-            heap_start as *const usize as usize / PAGE_SIZE,
+            addr_of!(HEAP_START) as usize / PAGE_SIZE,
             MEM_SIZE / PAGE_SIZE,
         );
 
@@ -74,9 +83,9 @@ pub extern "C" fn kernel_main() {
 fn clear_bss() {
     unsafe {
         core::ptr::write_bytes(
-            bss_start as *mut u8,
+            addr_of!(BSS_START) as *mut u8,
             0,
-            bss_end as *const usize as usize - bss_start as *const usize as usize,
+            addr_of!(BSS_END) as usize - addr_of!(BSS_START) as usize,
         );
     }
 }
