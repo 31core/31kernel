@@ -195,15 +195,21 @@ impl BuddyAllocator {
 
                 /* left node */
                 if page_relative.is_multiple_of(2_usize.pow(pow as u32)) {
+                    /* current node is partner node */
+                    if page_relative + found_pages == current.page_number {
+                        self.pows[pow] = current.next;
+                        self.recycle_node(current_idx);
+                        pow_final += 1;
+                        pages_count *= 2;
+
+                        continue 'pow_loop;
+                    }
+
                     while let Some(next) = current.next {
                         let next_node = self.free_nodes[next];
 
-                        /* current is is partner node,
-                         * or the next node is the last, and it is partner node */
-                        if page_relative + found_pages == current.page_number
-                            || next_node.next.is_none()
-                                && page_relative + found_pages == next_node.page_number
-                        {
+                        /* next node is partner node */
+                        if page_relative + found_pages == next_node.page_number {
                             self.free_nodes[current_idx].next = next_node.next;
                             self.recycle_node(next);
                             pow_final += 1;
@@ -214,28 +220,25 @@ impl BuddyAllocator {
                         current = next_node;
                         current_idx = next;
                     }
-
-                    /* current.next is None, and found partner node */
-                    if page_relative + found_pages == current.page_number {
-                        self.pows[pow] = current.next;
-                        self.recycle_node(current_idx);
-                        pow_final += 1;
-                        pages_count *= 2;
-                    } else {
-                        break 'pow_loop;
-                    }
                 }
                 /* right node */
                 else {
+                    /* current node is partner node */
+                    if current.page_number + found_pages == page_relative {
+                        self.pows[pow] = current.next;
+                        self.recycle_node(current_idx);
+                        pow_final += 1;
+                        page_relative -= pages_count;
+                        pages_count *= 2;
+
+                        continue 'pow_loop;
+                    }
+
                     while let Some(next) = current.next {
                         let next_node = self.free_nodes[next];
 
-                        /* current is is partner node,
-                         * or the next node is the last, and it is partner node */
-                        if current.page_number + found_pages == page_relative
-                            || next_node.next.is_none()
-                                && next_node.page_number + found_pages == page_relative
-                        {
+                        /* next node is is partner node */
+                        if next_node.page_number + found_pages == page_relative {
                             self.free_nodes[current_idx].next = next_node.next;
                             self.recycle_node(next);
                             pow_final += 1;
@@ -246,17 +249,6 @@ impl BuddyAllocator {
                         }
                         current = next_node;
                         current_idx = next;
-                    }
-
-                    /* current.next is None, and found partner node */
-                    if current.page_number + found_pages == page_relative {
-                        self.pows[pow] = current.next;
-                        self.recycle_node(current_idx);
-                        pow_final += 1;
-                        page_relative -= pages_count;
-                        pages_count *= 2;
-                    } else {
-                        break 'pow_loop;
                     }
                 }
             } else {
