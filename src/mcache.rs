@@ -1,3 +1,7 @@
+/*!
+ * An mcache allocator for small objects allocation.
+ */
+
 use crate::{
     PAGE_SIZE,
     buddy_allocator::{BUDDY_ALLOCATOR, ceil_to_power_2},
@@ -42,8 +46,8 @@ static mut GLOBAL_ALLOCATOR: CacheManager = CacheManager {
 };
 
 /**
- * An object allocator.
-*/
+ * An allocator for certain fix-sized objects.
+ */
 struct CachePage {
     /** Address of the first page. */
     page_start: *mut u8,
@@ -75,66 +79,28 @@ impl CachePage {
     }
     unsafe fn alloc_obj(&mut self) -> Option<*mut u8> {
         if self.obj_free == 0 {
-            return None;
-        }
+            None
+        } else {
+            self.obj_free -= 1;
+            self.obj_alloc += 1;
 
-        self.obj_free -= 1;
-        self.obj_alloc += 1;
-        let mut next_ptr = self.obj_start as *const usize;
-        unsafe {
-            if *next_ptr == 0 {
-                return Some(self.obj_start);
-            }
-        }
-
-        let mut prev_ptr;
-        loop {
-            prev_ptr = next_ptr;
-            next_ptr = unsafe { *next_ptr as *const usize };
-
-            unsafe {
-                if *next_ptr == 0 {
-                    (prev_ptr as *mut usize).write(0);
-                    return Some(next_ptr as *mut u8);
-                }
-            }
+            let next_ptr = unsafe { (self.obj_start as *const usize).read() };
+            let alloc_addr = self.obj_start;
+            self.obj_start = next_ptr as *mut u8;
+            Some(alloc_addr)
         }
     }
     unsafe fn free_obj(&mut self, ptr: *mut u8) {
-        unsafe {
-            self.obj_alloc -= 1;
+        self.obj_alloc -= 1;
+        self.obj_free += 1;
 
-            if self.obj_free == 0 {
-                self.obj_free += 1;
-                self.obj_start = ptr;
-                (ptr as *mut usize).write(0);
-                return;
-            }
-
-            self.obj_free += 1;
-
-            if (ptr as usize) < self.obj_start as usize {
-                (ptr as *mut usize).write(self.obj_start as usize);
-                self.obj_start = ptr;
-                return;
-            }
-
-            let mut next_ptr = self.obj_start as *const usize;
-            loop {
-                if (next_ptr as usize) < ptr as usize && *next_ptr > ptr as usize {
-                    (ptr as *mut usize).write(*next_ptr);
-                    (next_ptr as *mut usize).write(ptr as usize);
-                    return;
-                }
-                if *next_ptr == 0 {
-                    (next_ptr as *mut usize).write(ptr as usize);
-                    (ptr as *mut usize).write(0);
-                    return;
-                }
-
-                next_ptr = *next_ptr as *const usize;
-            }
-        }
+        unsafe { (ptr as *mut usize).write(self.obj_start as usize) };
+        self.obj_start = ptr;
+    }
+    /** Check if an object is allocated by this cache. */
+    fn in_range(&self, ptr: *const u8) -> bool {
+        (ptr as usize) >= self.page_start as usize
+            && (ptr as usize) < unsafe { self.page_start.add(self.page_num * PAGE_SIZE) } as usize
     }
 }
 
@@ -190,7 +156,7 @@ unsafe impl GlobalAlloc for CacheManager {
                 if !GLOBAL_ALLOCATOR.is_cache_full {
                     /* add a new cache */
                     let page_count = ceil_to_power_2(CACHE_OBJ_COUNT * obj_size / PAGE_SIZE);
-                    let offset = core::mem::size_of::<CachePage>().div_ceil(obj_size);
+                    let offset = core::mem::size_of::<CachePage>().div_ceil(obj_size); // offest in n objects size
                     let cache_addr = (PAGE_SIZE
                         * (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_count))
                         as *mut CachePage;
@@ -230,9 +196,7 @@ unsafe impl GlobalAlloc for CacheManager {
             if to_objsize(layout.size()).is_some() {
                 for i in &mut (*(&raw mut GLOBAL_ALLOCATOR)).caches {
                     if let Some(cache) = *i
-                        && (ptr as usize) >= (*cache).page_start as usize
-                        && (ptr as usize)
-                            < (*cache).page_start.add((*cache).page_num * PAGE_SIZE) as usize
+                        && (*cache).in_range(ptr)
                     {
                         (*cache).free_obj(ptr);
 
