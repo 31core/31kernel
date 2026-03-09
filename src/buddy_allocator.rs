@@ -194,7 +194,7 @@ impl BuddyAllocator {
                 let mut current = self.free_nodes[current_idx];
 
                 /* left node */
-                if page_relative.is_multiple_of(2_usize.pow(pow as u32)) {
+                if page_relative.is_multiple_of(2_usize.pow((pow + 1) as u32)) {
                     /* current node is partner node */
                     if page_relative + found_pages == current.page_number {
                         self.pows[pow] = current.next;
