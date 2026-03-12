@@ -84,8 +84,8 @@ impl Display for KernelMessageEntry {
         write!(
             f,
             "[{:5}.{:06}] {}",
-            self.time / 1000000,
-            self.time % 1000000,
+            self.time / 1_000_000_000,
+            self.time % 1_000_000_000,
             self.message
         )
     }
@@ -111,10 +111,7 @@ impl KernelMessage {
         self.add_message(KernelMessageLevel::Debug, msg);
     }
     pub fn add_message(&mut self, level: KernelMessageLevel, msg: &str) {
-        #[cfg(target_arch = "riscv64")]
-        let time = crate::arch::riscv64::get_sys_time();
-        #[cfg(target_arch = "aarch64")]
-        let time = 0;
+        let time = crate::time::get_sys_time();
         self.msgs.push(KernelMessageEntry::new(time, level, msg));
 
         if let Some(output_fn) = self.output_handler {

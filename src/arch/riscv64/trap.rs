@@ -33,6 +33,7 @@ pub unsafe extern "C" fn strap_handler(ctx: &mut Context) -> &mut Context {
     if scause == SCAUSE_ECALL_U || scause == SCAUSE_ECALL_S {
         unsafe { sepc_w(sepc_r() + 4) }; // set return address
     } else if scause == SCAUSE_TIMER_S {
+        crate::time::timer();
         super::set_timer(super::TIMER_INTERVAL);
     }
     ctx

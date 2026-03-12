@@ -14,6 +14,7 @@ mod page;
 mod rand;
 mod syscall;
 mod task;
+mod time;
 mod vfs;
 
 use core::{arch::asm, ptr::addr_of};

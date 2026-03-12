@@ -166,11 +166,12 @@ impl PageManagement for PageManager {
     unsafe fn map(&mut self, vpn: usize, ppn: usize, mode: &[PageACL]) {
         /* convert ACLs list into riscv PTE mode field bits */
         let mut mode_u64 = 0;
-        for i in mode {
-            match i {
+        for m in mode {
+            match m {
                 PageACL::Read => mode_u64 |= PTE_R_FLAG,
                 PageACL::Write => mode_u64 |= PTE_W_FLAG,
                 PageACL::Execute => mode_u64 |= PTE_X_FLAG,
+                PageACL::User => mode_u64 |= PTE_U_FLAG,
             }
         }
 

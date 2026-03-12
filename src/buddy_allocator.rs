@@ -70,7 +70,7 @@ impl BuddyAllocator {
 
         fn floor_to_power_2(mem_size: usize) -> usize {
             for pow in (0..BUDDY_ALLOC_MAX_POW).rev() {
-                if (mem_size >> pow) & 1 == 1 {
+                if mem_size >> pow == 1 {
                     return pow;
                 }
             }
@@ -79,22 +79,17 @@ impl BuddyAllocator {
 
         /* initialize free node linked table */
         self.free_start = Some(0);
-        for (i, node) in self.free_nodes.iter_mut().enumerate() {
-            if i < NODE_COMPATIBILITY - 1 {
-                *node = FreeNode {
-                    page_number: 0,
-                    next: Some(i + 1),
-                };
-            } else {
-                *node = FreeNode {
-                    page_number: 0,
-                    next: None,
-                };
-            }
+        for (i, node) in self
+            .free_nodes
+            .iter_mut()
+            .take(NODE_COMPATIBILITY - 1)
+            .enumerate()
+        {
+            node.next = Some(i + 1);
         }
 
         let mut current_ptr = 0;
-        loop {
+        while pages_count > 0 {
             let pow = floor_to_power_2(pages_count);
 
             self.add_node(pow, FreeNode::new(current_ptr));
@@ -102,10 +97,6 @@ impl BuddyAllocator {
             let node_pages = 2_usize.pow(pow as u32);
             pages_count -= node_pages;
             current_ptr += node_pages;
-
-            if pages_count == 0 {
-                break;
-            }
         }
     }
 

@@ -62,11 +62,11 @@ struct CachePage {
 
 impl CachePage {
     /** Initialize cache on pages. */
-    unsafe fn init(&mut self) {
+    unsafe fn init(&mut self, offset: usize) {
         for i in 0..self.obj_free - 1 {
             unsafe {
-                (self.page_start.add(i * self.obj_size) as *mut usize)
-                    .write(self.page_start.add((i + 1) * self.obj_size) as usize);
+                (self.page_start.add((offset + i) * self.obj_size) as *mut usize)
+                    .write(self.page_start.add((offset + i + 1) * self.obj_size) as usize);
             }
         }
 
@@ -141,7 +141,7 @@ unsafe impl GlobalAlloc for CacheManager {
         unsafe {
             if !GLOBAL_ALLOCATOR.is_init {
                 GLOBAL_ALLOCATOR.is_init = true;
-                GLOBAL_ALLOCATOR.next = Some(Box::new(Self::default()));
+                GLOBAL_ALLOCATOR.next = Some(Box::default());
             }
 
             /* allocate with cache manager */
@@ -155,20 +155,20 @@ unsafe impl GlobalAlloc for CacheManager {
                 }
                 if !GLOBAL_ALLOCATOR.is_cache_full {
                     /* add a new cache */
-                    let page_count = ceil_to_power_2(CACHE_OBJ_COUNT * obj_size / PAGE_SIZE);
+                    let page_num = ceil_to_power_2(CACHE_OBJ_COUNT * obj_size / PAGE_SIZE);
                     let offset = core::mem::size_of::<CachePage>().div_ceil(obj_size); // offest in n objects size
                     let cache_addr = (PAGE_SIZE
-                        * (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_count))
+                        * (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_num))
                         as *mut CachePage;
                     let mut cache = CachePage {
                         page_start: cache_addr as *mut u8,
-                        page_num: page_count,
+                        page_num,
                         obj_size,
                         obj_alloc: 0,
-                        obj_free: page_count * PAGE_SIZE / obj_size - offset,
+                        obj_free: page_num * PAGE_SIZE / obj_size - offset,
                         obj_start: (cache_addr).byte_add(offset * obj_size) as *mut u8,
                     };
-                    cache.init();
+                    cache.init(offset);
                     let addr = cache.alloc_obj().unwrap();
                     cache_addr.write(cache);
 

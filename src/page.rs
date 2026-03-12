@@ -7,6 +7,7 @@ pub enum PageACL {
     Read,
     Write,
     Execute,
+    User,
 }
 
 macro_rules! map_range {
