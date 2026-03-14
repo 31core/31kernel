@@ -151,11 +151,25 @@ impl PageManager {
      * Return: Pysical Page Number
      */
     pub unsafe fn alloc_page_dir() -> u64 {
-        unsafe { alloc_zeroed(Layout::new::<[u8; PAGE_SIZE]>()) as u64 >> 12 }
+        unsafe {
+            alloc_zeroed(
+                Layout::new::<[u8; PAGE_SIZE]>()
+                    .align_to(PAGE_SIZE)
+                    .unwrap(),
+            ) as u64
+                >> 12
+        }
     }
     /** Release a page directory. */
     pub unsafe fn release_page_dir(ppn: u64) {
-        unsafe { dealloc((ppn << 12) as *mut u8, Layout::new::<[u8; PAGE_SIZE]>()) };
+        unsafe {
+            dealloc(
+                (ppn << 12) as *mut u8,
+                Layout::new::<[u8; PAGE_SIZE]>()
+                    .align_to(PAGE_SIZE)
+                    .unwrap(),
+            )
+        };
     }
     pub fn root_ppn(&self) -> u64 {
         self.root.ptes as u64 >> 12

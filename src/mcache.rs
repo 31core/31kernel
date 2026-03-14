@@ -7,7 +7,11 @@ use crate::{
     buddy_allocator::{BUDDY_ALLOCATOR, ceil_to_power_2},
 };
 use alloc::boxed::Box;
-use core::alloc::{GlobalAlloc, Layout};
+use core::{
+    alloc::{GlobalAlloc, Layout},
+    mem::size_of,
+    ptr::NonNull,
+};
 
 const CACHE_NUM: usize = 1024;
 const CACHE_OBJ_COUNT: usize = 512;
@@ -37,6 +41,17 @@ fn to_objsize(size: usize) -> Option<usize> {
     CACHE_SIZE.into_iter().find(|&objsize| objsize >= size)
 }
 
+fn padding_bytes(align: usize) -> usize {
+    let ptr_size = size_of::<*mut CacheManager>();
+    let mut n_align = align;
+    loop {
+        if n_align >= ptr_size {
+            return n_align - ptr_size;
+        }
+        n_align += align;
+    }
+}
+
 #[global_allocator]
 static mut GLOBAL_ALLOCATOR: CacheManager = CacheManager {
     caches: [None; CACHE_NUM],
@@ -44,6 +59,42 @@ static mut GLOBAL_ALLOCATOR: CacheManager = CacheManager {
     is_cache_full: false,
     is_init: false,
 };
+
+/**
+ * A cache object with the following structure.
+ * Allocated object:
+ * ```
+ * +------------------------------------------+
+ * | Cache manager pointer | Padding | Object |
+ * +------------------------------------------+
+ * ```
+ *
+ * Unallocated object:
+ * ```
+ * +-----------------------------+
+ * | Next pointer | Unused space |
+ * +-----------------------------+
+ * ```
+ */
+struct CacheObject {
+    ptr: *mut u8,
+}
+
+impl CacheObject {
+    fn object_ptr(&self, padding: usize) -> *mut u8 {
+        unsafe { self.ptr.add(padding + size_of::<*mut CacheManager>()) }
+    }
+    /** Write cache manager pointer. */
+    unsafe fn write_head(&self, mgr: *const CacheManager) {
+        unsafe { (self.ptr as *mut *const CacheManager).write(mgr) };
+    }
+    unsafe fn read_next(&self) -> *mut u8 {
+        unsafe { (self.ptr as *const usize).read() as *mut u8 }
+    }
+    unsafe fn write_next(&self, next: *mut u8) {
+        unsafe { (self.ptr as *mut *const u8).write(next) };
+    }
+}
 
 /**
  * An allocator for certain fix-sized objects.
@@ -65,16 +116,20 @@ impl CachePage {
     unsafe fn init(&mut self, offset: usize) {
         for i in 0..self.obj_free - 1 {
             unsafe {
-                (self.page_start.add((offset + i) * self.obj_size) as *mut usize)
-                    .write(self.page_start.add((offset + i + 1) * self.obj_size) as usize);
+                CacheObject {
+                    ptr: self.page_start.add((offset + i) * self.obj_size),
+                }
+                .write_next(self.page_start.add((offset + i + 1) * self.obj_size));
             }
         }
 
         unsafe {
-            (self
-                .page_start
-                .add(self.page_num * PAGE_SIZE - self.obj_size) as *mut usize)
-                .write(0);
+            CacheObject {
+                ptr: (self
+                    .page_start
+                    .add(self.page_num * PAGE_SIZE - self.obj_size)),
+            }
+            .write_next(core::ptr::null_mut());
         }
     }
     unsafe fn alloc_obj(&mut self) -> Option<*mut u8> {
@@ -84,9 +139,14 @@ impl CachePage {
             self.obj_free -= 1;
             self.obj_alloc += 1;
 
-            let next_ptr = unsafe { (self.obj_start as *const usize).read() };
+            let next_ptr = unsafe {
+                CacheObject {
+                    ptr: self.obj_start,
+                }
+                .read_next()
+            };
             let alloc_addr = self.obj_start;
-            self.obj_start = next_ptr as *mut u8;
+            self.obj_start = next_ptr;
             Some(alloc_addr)
         }
     }
@@ -94,7 +154,7 @@ impl CachePage {
         self.obj_alloc -= 1;
         self.obj_free += 1;
 
-        unsafe { (ptr as *mut usize).write(self.obj_start as usize) };
+        unsafe { CacheObject { ptr }.write_next(self.obj_start) };
         self.obj_start = ptr;
     }
     /** Check if an object is allocated by this cache. */
@@ -105,7 +165,7 @@ impl CachePage {
 }
 
 struct CacheManager {
-    caches: [Option<*mut CachePage>; CACHE_NUM],
+    caches: [Option<NonNull<CachePage>>; CACHE_NUM],
     next: Option<Box<Self>>,
     is_cache_full: bool,
     is_init: bool,
@@ -126,7 +186,7 @@ impl CacheManager {
     fn add_cache(&mut self, cache: *mut CachePage) {
         for (i, cache_iter) in self.caches.iter_mut().enumerate() {
             if cache_iter.is_none() {
-                *cache_iter = Some(cache);
+                *cache_iter = NonNull::new(cache);
                 if i == CACHE_NUM - 1 {
                     self.is_cache_full = true;
                 }
@@ -136,50 +196,52 @@ impl CacheManager {
     }
 }
 
-unsafe impl GlobalAlloc for CacheManager {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+impl CacheManager {
+    unsafe fn _alloc(&mut self, layout: Layout) -> *mut u8 {
         unsafe {
-            if !GLOBAL_ALLOCATOR.is_init {
-                GLOBAL_ALLOCATOR.is_init = true;
-                GLOBAL_ALLOCATOR.next = Some(Box::default());
+            if !self.is_init {
+                self.is_init = true;
+                self.next = Some(Box::default());
             }
 
+            let padding = padding_bytes(layout.align());
+            let alloc_size = layout.size() + padding + core::mem::size_of::<*mut CacheManager>();
             /* allocate with cache manager */
-            if let Some(obj_size) = to_objsize(layout.size()) {
-                for cache in GLOBAL_ALLOCATOR.caches.into_iter().flatten() {
-                    if (*cache).obj_size == obj_size
-                        && let Some(addr) = (*cache).alloc_obj()
+            if let Some(alloc_size) = to_objsize(alloc_size) {
+                for mut cache in self.caches.into_iter().flatten() {
+                    if cache.as_ref().obj_size == alloc_size
+                        && let Some(ptr) = cache.as_mut().alloc_obj()
                     {
-                        return addr;
+                        let obj = CacheObject { ptr };
+                        obj.write_head(self as *const Self);
+                        return obj.object_ptr(padding);
                     }
                 }
-                if !GLOBAL_ALLOCATOR.is_cache_full {
+                if !self.is_cache_full {
                     /* add a new cache */
-                    let page_num = ceil_to_power_2(CACHE_OBJ_COUNT * obj_size / PAGE_SIZE);
-                    let offset = core::mem::size_of::<CachePage>().div_ceil(obj_size); // offest in n objects size
+                    let page_num = ceil_to_power_2(CACHE_OBJ_COUNT * alloc_size / PAGE_SIZE);
+                    let offset = size_of::<CachePage>().div_ceil(alloc_size); // offest in n objects size
                     let cache_addr = (PAGE_SIZE
                         * (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_num))
                         as *mut CachePage;
                     let mut cache = CachePage {
                         page_start: cache_addr as *mut u8,
                         page_num,
-                        obj_size,
+                        obj_size: alloc_size,
                         obj_alloc: 0,
-                        obj_free: page_num * PAGE_SIZE / obj_size - offset,
-                        obj_start: (cache_addr).byte_add(offset * obj_size) as *mut u8,
+                        obj_free: page_num * PAGE_SIZE / alloc_size - offset,
+                        obj_start: (cache_addr).byte_add(offset * alloc_size) as *mut u8,
                     };
                     cache.init(offset);
-                    let addr = cache.alloc_obj().unwrap();
+                    let ptr = cache.alloc_obj().unwrap();
                     cache_addr.write(cache);
 
-                    (*(&raw mut GLOBAL_ALLOCATOR)).add_cache(cache_addr);
-                    addr
+                    let obj = CacheObject { ptr };
+                    self.add_cache(cache_addr);
+                    obj.write_head(self as *const Self);
+                    obj.object_ptr(padding)
                 } else {
-                    (*(&raw mut GLOBAL_ALLOCATOR))
-                        .next
-                        .as_mut()
-                        .unwrap()
-                        .alloc(layout)
+                    self.next.as_mut().unwrap()._alloc(layout)
                 }
             }
             /* use buddy allocator for large object */
@@ -191,23 +253,36 @@ unsafe impl GlobalAlloc for CacheManager {
             }
         }
     }
+}
+
+unsafe impl GlobalAlloc for CacheManager {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe { (*(&raw mut GLOBAL_ALLOCATOR))._alloc(layout) }
+    }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let padding = padding_bytes(layout.align());
+        let alloc_size = layout.size() + padding + size_of::<*mut Self>();
+
         unsafe {
-            if to_objsize(layout.size()).is_some() {
-                for i in &mut (*(&raw mut GLOBAL_ALLOCATOR)).caches {
-                    if let Some(cache) = *i
-                        && (*cache).in_range(ptr)
+            if to_objsize(alloc_size).is_some() {
+                let mgr = (ptr as *mut *mut Self)
+                    .byte_sub(padding + size_of::<*mut Self>())
+                    .read();
+
+                for i in &mut (*mgr).caches {
+                    if let Some(mut cache) = *i
+                        && cache.as_ref().in_range(ptr)
                     {
-                        (*cache).free_obj(ptr);
+                        cache.as_mut().free_obj(ptr);
 
                         /* free object cache */
-                        if (*cache).obj_alloc == 0 {
+                        if cache.as_ref().obj_alloc == 0 {
                             (*(&raw mut BUDDY_ALLOCATOR)).free_pages(
-                                (*cache).page_start as usize / PAGE_SIZE,
-                                (*cache).page_num,
+                                cache.as_ref().page_start as usize / PAGE_SIZE,
+                                cache.as_ref().page_num,
                             );
                             *i = None;
-                            GLOBAL_ALLOCATOR.is_cache_full = false;
+                            (*mgr).is_cache_full = false;
                         }
                         return;
                     }
