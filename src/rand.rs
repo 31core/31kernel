@@ -85,7 +85,9 @@ impl RandomGenerator for MT19937 {
         self.state_array[0] = seed;
 
         for i in 1..N {
-            seed = F * (seed ^ (seed >> (W - 2))) + i as u32; // Knuth TAOCP Vol2. 3rd Ed. P.106 for multiplier.
+            seed = F
+                .wrapping_mul(seed ^ (seed >> (W - 2)))
+                .wrapping_add(i as u32); // Knuth TAOCP Vol2. 3rd Ed. P.106 for multiplier.
             self.state_array[i] = seed;
         }
     }

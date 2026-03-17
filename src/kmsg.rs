@@ -1,17 +1,22 @@
-//! Kernel debug message
+/*!
+ * Kernel debug message.
+ */
 
 use alloc::{
-    borrow::ToOwned,
     string::{String, ToString},
     vec::Vec,
 };
-use core::{fmt::Display, mem::MaybeUninit};
+use core::{
+    fmt::Result as FmtResult,
+    fmt::{Display, Formatter},
+    mem::MaybeUninit,
+};
 
 pub static mut KMSG: MaybeUninit<KernelMessage> = MaybeUninit::uninit();
 
 #[macro_export]
 macro_rules! printk_error {
-    ($($arg: tt)*) => {
+    ($($arg:tt)*) => {
         {
             #[allow(unused_unsafe)]
             let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
@@ -22,7 +27,7 @@ macro_rules! printk_error {
 
 #[macro_export]
 macro_rules! printk_warning {
-    ($($arg: tt)*) => {
+    ($($arg:tt)*) => {
         {
             #[allow(unused_unsafe)]
             let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
@@ -33,7 +38,7 @@ macro_rules! printk_warning {
 
 #[macro_export]
 macro_rules! printk {
-    ($($arg: tt)*) => {
+    ($($arg:tt)*) => {
         {
             #[allow(unused_unsafe)]
             let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
@@ -69,18 +74,21 @@ pub struct KernelMessageEntry {
 }
 
 impl KernelMessageEntry {
-    pub fn new(time: u64, level: KernelMessageLevel, msg: &str) -> Self {
+    pub fn new<S>(time: u64, level: KernelMessageLevel, msg: S) -> Self
+    where
+        S: Into<String>,
+    {
         Self {
             level,
             time,
-            message: msg.to_owned(),
+            message: msg.into(),
         }
     }
 }
 
 impl Display for KernelMessageEntry {
     /** Fromat a message into `[ttttt:tttttt] xxxxxx` */
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(
             f,
             "[{:5}.{:06}] {}",
@@ -94,23 +102,39 @@ impl Display for KernelMessageEntry {
 #[derive(Default)]
 pub struct KernelMessage {
     pub msgs: Vec<KernelMessageEntry>,
+    /** If `output_handler` is set, message will outputs when calling `add_message`. */
     pub output_handler: Option<fn(&str)>,
 }
 
 impl KernelMessage {
-    pub fn fatal(&mut self, msg: &str) {
+    pub fn fatal<S>(&mut self, msg: S)
+    where
+        S: Into<String>,
+    {
         self.add_message(KernelMessageLevel::Fatal, msg);
     }
-    pub fn error(&mut self, msg: &str) {
+    pub fn error<S>(&mut self, msg: S)
+    where
+        S: Into<String>,
+    {
         self.add_message(KernelMessageLevel::Error, msg);
     }
-    pub fn warning(&mut self, msg: &str) {
+    pub fn warning<S>(&mut self, msg: S)
+    where
+        S: Into<String>,
+    {
         self.add_message(KernelMessageLevel::Warning, msg);
     }
-    pub fn debug(&mut self, msg: &str) {
+    pub fn debug<S>(&mut self, msg: S)
+    where
+        S: Into<String>,
+    {
         self.add_message(KernelMessageLevel::Debug, msg);
     }
-    pub fn add_message(&mut self, level: KernelMessageLevel, msg: &str) {
+    pub fn add_message<S>(&mut self, level: KernelMessageLevel, msg: S)
+    where
+        S: Into<String>,
+    {
         let time = crate::time::get_sys_time();
         self.msgs.push(KernelMessageEntry::new(time, level, msg));
 
