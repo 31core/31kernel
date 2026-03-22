@@ -2,9 +2,8 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-
 use crate::program::Program;
+use alloc::vec::Vec;
 
 mod program;
 
@@ -53,7 +52,7 @@ pub enum ElfType {
 }
 
 #[derive(Debug)]
-pub enum ElfArchitecture {
+pub enum ElfMachine {
     NoSpec,
     X86,
     Arm,
@@ -65,7 +64,7 @@ pub enum ElfArchitecture {
 #[derive(Debug)]
 pub struct Elf {
     pub e_abi: ElfAbi,
-    pub e_machine: ElfArchitecture,
+    pub e_machine: ElfMachine,
     pub e_type: ElfType,
     pub e_entry: usize,
     pub p_headers: Vec<Program>,
@@ -99,12 +98,12 @@ impl Elf {
         };
 
         let e_machine = match int!(u16, bytes, 18, endian) {
-            0x00 => ElfArchitecture::NoSpec,
-            0x03 => ElfArchitecture::X86,
-            0x28 => ElfArchitecture::Arm,
-            0x3e => ElfArchitecture::X86_64,
-            0xb7 => ElfArchitecture::Arm64,
-            0xf3 => ElfArchitecture::Riscv,
+            0x00 => ElfMachine::NoSpec,
+            0x03 => ElfMachine::X86,
+            0x28 => ElfMachine::Arm,
+            0x3e => ElfMachine::X86_64,
+            0xb7 => ElfMachine::Arm64,
+            0xf3 => ElfMachine::Riscv,
             arch => return Err(ElfError::InvalidArchitecture(arch)),
         };
 

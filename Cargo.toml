@@ -8,6 +8,7 @@ license-file = "LICENSE"
 [dependencies]
 # cryptograthy libraries
 aes = { path = "crypto/aes" }
+chacha20 = { path = "crypto/chacha20" }
 crypto_framework = { path = "crypto/crypto_framework" }
 sha2 = { path = "crypto/sha2" }
 

@@ -110,7 +110,7 @@ impl CacheCell {
         unsafe { (self.ptr as *mut *const CacheManager).write(mgr) };
     }
     unsafe fn read_next(&self) -> *mut u8 {
-        unsafe { (self.ptr as *const usize).read() as *mut u8 }
+        unsafe { (self.ptr as *const *mut u8).read() }
     }
     unsafe fn write_next(&self, next: *mut u8) {
         unsafe { (self.ptr as *mut *const u8).write(next) };
@@ -137,20 +137,17 @@ impl CachePage {
     unsafe fn init(&mut self, offset: usize) {
         for i in 0..self.free_count - 1 {
             unsafe {
-                CacheCell {
-                    ptr: self.page_start.add((offset + i) * self.cell_size),
-                }
-                .write_next(self.page_start.add((offset + i + 1) * self.cell_size));
+                let ptr = self.page_start.add((offset + i) * self.cell_size);
+                let ptr_next = self.page_start.add((offset + i + 1) * self.cell_size);
+                CacheCell { ptr }.write_next(ptr_next);
             }
         }
 
         unsafe {
-            CacheCell {
-                ptr: (self
-                    .page_start
-                    .add(self.page_count * PAGE_SIZE - self.cell_size)),
-            }
-            .write_next(core::ptr::null_mut());
+            let ptr = self
+                .page_start
+                .add(self.page_count * PAGE_SIZE - self.cell_size);
+            CacheCell { ptr }.write_next(core::ptr::null_mut());
         }
     }
     unsafe fn alloc_obj(&mut self) -> Option<*mut u8> {

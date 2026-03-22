@@ -93,7 +93,7 @@ impl Display for KernelMessageEntry {
             f,
             "[{:5}.{:06}] {}",
             self.time / 1_000_000_000,
-            self.time % 1_000_000_000,
+            self.time % 1_000_000_000 / 1_000, // keep high 6 digits
             self.message
         )
     }

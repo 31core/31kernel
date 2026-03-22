@@ -1,4 +1,7 @@
-use alloc::alloc::{Layout, alloc_zeroed, dealloc};
+use alloc::{
+    alloc::{Layout, alloc_zeroed, dealloc},
+    vec::Vec,
+};
 use core::arch::asm;
 
 use crate::{
@@ -10,6 +13,8 @@ pub const MODE_SV39: u64 = 8;
 
 const PTES_PER_DIR: usize = 512;
 
+const MIB: usize = 1024 * 1024;
+
 /**
  * Set RV64 SATP register.
  *
@@ -19,10 +24,7 @@ const PTES_PER_DIR: usize = 512;
  */
 pub unsafe fn set_satp(mut ppn: u64, mode: u64) {
     ppn |= mode << 60;
-    unsafe {
-        asm!("csrw satp, {}", in(reg) ppn);
-        asm!("sfence.vma");
-    }
+    unsafe { asm!("csrw satp, {}", in(reg) ppn) };
 }
 
 pub unsafe fn get_satp() -> u64 {
@@ -39,85 +41,64 @@ pub const PTE_X_FLAG: u64 = 1 << 3;
 pub const PTE_U_FLAG: u64 = 1 << 4;
 
 #[derive(Default, Clone, Copy)]
-pub struct PageTableEntry {
-    pub r: bool,
-    pub w: bool,
-    pub x: bool,
-    pub u: bool,
-    pub ppn: u64,
-}
+#[repr(transparent)]
+pub struct PageTableEntry(u64);
 
-impl From<u64> for PageTableEntry {
-    fn from(pte_u64: u64) -> Self {
-        let mut pte = Self::default();
+impl PageTableEntry {
+    fn mode(&self) -> Vec<PageACL> {
+        let mut mode = Vec::new();
 
-        if pte_u64 & PTE_R_FLAG != 0 {
-            pte.r = true;
+        if self.r() {
+            mode.push(PageACL::Read);
         }
-
-        if pte_u64 & PTE_W_FLAG != 0 {
-            pte.w = true;
+        if self.w() {
+            mode.push(PageACL::Write);
         }
-
-        if pte_u64 & PTE_X_FLAG != 0 {
-            pte.x = true;
+        if self.x() {
+            mode.push(PageACL::Execute);
         }
-
-        if pte_u64 & PTE_U_FLAG != 0 {
-            pte.u = true;
+        if self.u() {
+            mode.push(PageACL::User);
         }
-
-        pte.ppn = pte_u64 >> 10;
-
-        pte
+        mode
     }
-}
-
-impl From<PageTableEntry> for u64 {
-    fn from(pte: PageTableEntry) -> Self {
-        let mut pte_u64 = 0;
-
-        pte_u64 |= PTE_V_FLAG;
-
-        if pte.r {
-            pte_u64 |= PTE_R_FLAG;
-        }
-
-        if pte.w {
-            pte_u64 |= PTE_W_FLAG;
-        }
-
-        if pte.x {
-            pte_u64 |= PTE_X_FLAG;
-        }
-
-        if pte.u {
-            pte_u64 |= PTE_U_FLAG;
-        }
-
-        pte_u64 |= pte.ppn << 10;
-
-        pte_u64
+    fn r(&self) -> bool {
+        self.0 & PTE_R_FLAG != 0
+    }
+    fn w(&self) -> bool {
+        self.0 & PTE_W_FLAG != 0
+    }
+    fn x(&self) -> bool {
+        self.0 & PTE_X_FLAG != 0
+    }
+    fn v(&self) -> bool {
+        self.0 & PTE_V_FLAG != 0
+    }
+    fn u(&self) -> bool {
+        self.0 & PTE_U_FLAG != 0
+    }
+    fn ppn(&self) -> u64 {
+        self.0 >> 10
     }
 }
 
 pub struct PageDirectory {
-    pub ptes: *mut u64,
+    pub ptes: *mut PageTableEntry,
 }
 
 impl PageDirectory {
     fn from_ppn(ppn: u64) -> Self {
         Self {
-            ptes: (ppn << 12) as *mut u64,
+            ptes: (ppn << 12) as *mut PageTableEntry,
         }
     }
-    pub fn set_pte(&mut self, count: usize, pte: PageTableEntry) {
-        unsafe { self.ptes.add(count).write(pte.into()) };
+    pub fn set_pte(&mut self, index: usize, pte: PageTableEntry) {
+        unsafe { self.ptes.add(index).write_volatile(pte) };
     }
     /** check if a page directory contains any PTE */
     fn is_empty(&self) -> bool {
         for i in 0..PTES_PER_DIR {
-            if unsafe { self.ptes.add(i).read_volatile() } != 0 {
+            if unsafe { self.ptes.add(i).read_volatile().0 } != 0 {
                 return false;
             }
         }
@@ -174,10 +155,103 @@ impl PageManager {
     pub fn root_ppn(&self) -> u64 {
         self.root.ptes as u64 >> 12
     }
+    unsafe fn map_4k(&mut self, vpn: usize, ppn: usize, mode: u64) {
+        let v1 = vpn >> 18;
+        let v2 = (vpn >> 9) & 0x1ff;
+        let v3 = vpn & 0x1ff;
+
+        let v1_pte = unsafe { self.root.ptes.add(v1).read_volatile() };
+        let v1_pte = if v1_pte.0 == 0 {
+            /* v1 PTE is empty */
+            let ppn = unsafe { Self::alloc_page_dir() };
+            let pte = PageTableEntry(ppn << 10 | PTE_V_FLAG);
+            self.root.set_pte(v1, pte);
+
+            pte
+        } else {
+            v1_pte
+        };
+
+        let mut v2_pdir = PageDirectory::from_ppn(v1_pte.ppn());
+        let v2_pte = unsafe { v2_pdir.ptes.add(v2).read_volatile() };
+        let v2_pte = if v2_pte.0 == 0 {
+            /* v2 PTE is empty */
+            let ppn = unsafe { Self::alloc_page_dir() };
+            let pte = PageTableEntry(ppn << 10 | PTE_V_FLAG);
+            v2_pdir.set_pte(v2, pte);
+
+            pte
+        } else {
+            v2_pte
+        };
+
+        let mut v3_pdir = PageDirectory::from_ppn(v2_pte.ppn());
+        let v3_pte = PageTableEntry((ppn as u64) << 10 | mode);
+        v3_pdir.set_pte(v3, v3_pte);
+    }
+    unsafe fn map_2m(&mut self, vpn: usize, ppn: usize, mode: u64) {
+        let v1 = vpn >> 18;
+        let v2 = (vpn >> 9) & 0x1ff;
+
+        let v1_pte = unsafe { self.root.ptes.add(v1).read_volatile() };
+        let v1_pte = if v1_pte.0 == 0 {
+            /* v1 PTE is empty */
+            let ppn = unsafe { Self::alloc_page_dir() };
+            let pte = PageTableEntry(ppn << 10 | PTE_V_FLAG);
+            self.root.set_pte(v1, pte);
+
+            pte
+        } else {
+            v1_pte
+        };
+
+        let mut v2_pdir = PageDirectory::from_ppn(v1_pte.ppn());
+        let v2_pte = PageTableEntry((ppn as u64) << 10 | mode);
+        v2_pdir.set_pte(v2, v2_pte);
+    }
+    unsafe fn unmap_2m(&mut self, vpn: usize, pages: usize) -> usize {
+        let v1 = vpn >> 18;
+        let v2 = (vpn >> 9) & 0x1ff;
+        let v3 = vpn & 0x1ff;
+
+        let v1_pte: PageTableEntry = unsafe { self.root.ptes.add(v1).read_volatile() };
+        let v2_pdir = PageDirectory::from_ppn(v1_pte.ppn());
+        let v2_pte: PageTableEntry = unsafe { v2_pdir.ptes.add(v2).read_volatile() };
+
+        unsafe { v2_pdir.ptes.add(v3).write_volatile(PageTableEntry(0)) };
+
+        /*
+         * v3 = vpn - 2mb page start
+         */
+
+        /* remap 4kb pages before `vpn` if vpn is not the start of the 2mb page */
+        unsafe { self.map(vpn - v3, v2_pte.ppn() as usize, v3, &v2_pte.mode()) };
+
+        if pages < PTES_PER_DIR - v3 {
+            /* remap 4kb pages after `vpn` + `pages` */
+            unsafe {
+                self.map(
+                    vpn + pages,
+                    v2_pte.ppn() as usize + v3 + pages,
+                    PTES_PER_DIR - v3 - pages,
+                    &v2_pte.mode(),
+                );
+            }
+            pages
+        } else {
+            if v2_pdir.is_empty() {
+                unsafe {
+                    Self::release_page_dir(v1_pte.ppn());
+                    self.root.ptes.add(v1).write_volatile(PageTableEntry(0));
+                }
+            }
+            PTES_PER_DIR - v3
+        }
+    }
 }
 
 impl PageManagement for PageManager {
-    unsafe fn map(&mut self, vpn: usize, ppn: usize, mode: &[PageACL]) {
+    unsafe fn map(&mut self, mut vpn: usize, mut ppn: usize, mut pages: usize, mode: &[PageACL]) {
         /* convert ACLs list into riscv PTE mode field bits */
         let mut mode_u64 = 0;
         for m in mode {
@@ -188,73 +262,65 @@ impl PageManagement for PageManager {
                 PageACL::User => mode_u64 |= PTE_U_FLAG,
             }
         }
+        mode_u64 |= PTE_V_FLAG;
 
-        let v1 = vpn >> 18;
-        let v2 = (vpn >> 9) & 0x1ff;
-        let v3 = vpn & 0x1ff;
-
-        let v1_pte = unsafe { self.root.ptes.add(v1).read_volatile() };
-        let v1_pte = if v1_pte == 0 {
-            /* v1 PTE is empty */
-            let ppn = unsafe { Self::alloc_page_dir() };
-            let pte = PageTableEntry {
-                ppn,
-                ..Default::default()
-            };
-            self.root.set_pte(v1, pte);
-
-            pte
-        } else {
-            v1_pte.into()
-        };
-
-        let mut v2_pdir = PageDirectory::from_ppn(v1_pte.ppn);
-        let v2_pte = unsafe { v2_pdir.ptes.add(v2).read_volatile() };
-        let v2_pte = if v2_pte == 0 {
-            /* v2 PTE is empty */
-            let ppn = unsafe { Self::alloc_page_dir() };
-            let pte = PageTableEntry {
-                ppn,
-                ..Default::default()
-            };
-            v2_pdir.set_pte(v2, pte);
-
-            pte
-        } else {
-            v2_pte.into()
-        };
-
-        let mut v3_pdir = PageDirectory::from_ppn(v2_pte.ppn);
-        let v3_pte = (((ppn as u64) << 10) | mode_u64).into();
-        v3_pdir.set_pte(v3, v3_pte);
-    }
-    unsafe fn unmap(&mut self, vpn: usize) {
-        let v1 = vpn >> 18;
-        let v2 = (vpn >> 9) & 0x1ff;
-        let v3 = vpn & 0x1ff;
-
-        let v1_pte: PageTableEntry = unsafe { self.root.ptes.add(v1).read_volatile().into() };
-        let v2_pdir = PageDirectory::from_ppn(v1_pte.ppn);
-        let v2_pte: PageTableEntry = unsafe { v2_pdir.ptes.add(v2).read_volatile().into() };
-        let v3_pdir = PageDirectory::from_ppn(v2_pte.ppn);
-        unsafe { v3_pdir.ptes.add(v3).write_volatile(0) };
-        if v3_pdir.is_empty() {
-            unsafe {
-                Self::release_page_dir(v2_pte.ppn);
+        while pages > 0 {
+            if vpn.is_multiple_of(2 * MIB / PAGE_SIZE)
+                && ppn.is_multiple_of(2 * MIB / PAGE_SIZE)
+                && pages >= 2 * MIB / PAGE_SIZE
+            {
+                unsafe { self.map_2m(vpn, ppn, mode_u64) };
+                vpn += 2 * MIB / PAGE_SIZE;
+                ppn += 2 * MIB / PAGE_SIZE;
+                pages -= 2 * MIB / PAGE_SIZE;
+            } else {
+                unsafe { self.map_4k(vpn, ppn, mode_u64) };
+                vpn += 1;
+                ppn += 1;
+                pages -= 1;
             }
-            unsafe { v2_pdir.ptes.add(v2).write_volatile(0) };
         }
+    }
+    unsafe fn unmap(&mut self, mut vpn: usize, mut pages: usize) {
+        while pages > 0 {
+            let v1 = vpn >> 18;
+            let v2 = (vpn >> 9) & 0x1ff;
+            let v3 = vpn & 0x1ff;
 
-        if v2_pdir.is_empty() {
-            unsafe {
-                Self::release_page_dir(v1_pte.ppn);
+            let v1_pte: PageTableEntry = unsafe { self.root.ptes.add(v1).read_volatile() };
+            let v2_pdir = PageDirectory::from_ppn(v1_pte.ppn());
+            let v2_pte: PageTableEntry = unsafe { v2_pdir.ptes.add(v2).read_volatile() };
+            /* 2MiB huge page */
+            if !v2_pte.v() {
+                let ummap_pages = unsafe { self.unmap_2m(vpn, pages) };
+                vpn += ummap_pages;
+                pages -= ummap_pages;
+                continue;
             }
-            unsafe { self.root.ptes.add(v1).write_volatile(0) };
+
+            let v3_pdir = PageDirectory::from_ppn(v2_pte.ppn());
+            unsafe { v3_pdir.ptes.add(v3).write_volatile(PageTableEntry(0)) };
+            if v3_pdir.is_empty() {
+                unsafe {
+                    Self::release_page_dir(v2_pte.ppn());
+                    v2_pdir.ptes.add(v2).write_volatile(PageTableEntry(0));
+                }
+            }
+
+            if v2_pdir.is_empty() {
+                unsafe {
+                    Self::release_page_dir(v1_pte.ppn());
+                    self.root.ptes.add(v1).write_volatile(PageTableEntry(0));
+                }
+            }
+            vpn += 1;
+            pages -= 1;
         }
     }
     unsafe fn switch_to(&self) {
-        unsafe {
-            set_satp(self.root_ppn(), MODE_SV39);
-        }
+        unsafe { set_satp(self.root_ppn(), MODE_SV39) };
+    }
+    unsafe fn refresh(&self) {
+        unsafe { asm!("sfence.vma") };
     }
 }

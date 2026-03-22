@@ -42,6 +42,7 @@ pub unsafe fn task_init() {
     unsafe {
         kernel_page.map_kernel_region();
         kernel_page.switch_to();
+        kernel_page.refresh();
     }
 
     let kernel_task = Task {

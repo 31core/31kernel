@@ -1,6 +1,5 @@
 //! Common code for page management
 
-use crate::PAGE_SIZE;
 use core::ptr::addr_of;
 
 pub enum PageACL {
@@ -12,12 +11,11 @@ pub enum PageACL {
 
 macro_rules! map_range {
     ($start:expr, $end:expr, $mgr:expr, $map_fn:ident) => {
-        for i in 0..(addr_of!($end) as usize - addr_of!($start) as usize) / PAGE_SIZE {
-            $mgr.$map_fn(
-                (addr_of!($start) as usize >> 12) + i,
-                (addr_of!($start) as usize >> 12) + i,
-            );
-        }
+        $mgr.$map_fn(
+            (addr_of!($start) as usize >> 12),
+            (addr_of!($start) as usize >> 12),
+            (addr_of!($end) as usize >> 12) - (addr_of!($start) as usize >> 12),
+        );
     };
 }
 
@@ -30,24 +28,24 @@ pub trait PageManagement {
      * * `ppn`: Pysical Page Number.
      * * `mode`: Page access mode.
      */
-    unsafe fn map(&mut self, vpn: usize, ppn: usize, mode: &[PageACL]);
+    unsafe fn map(&mut self, vpn: usize, ppn: usize, pages: usize, mode: &[PageACL]);
     /**
      * Map as read-only acl
      */
-    unsafe fn map_rodata(&mut self, vpn: usize, ppn: usize) {
-        unsafe { self.map(vpn, ppn, &[PageACL::Read]) };
+    unsafe fn map_rodata(&mut self, vpn: usize, ppn: usize, pages: usize) {
+        unsafe { self.map(vpn, ppn, pages, &[PageACL::Read]) };
     }
     /**
      * Map as read-write acl
      */
-    unsafe fn map_data(&mut self, vpn: usize, ppn: usize) {
-        unsafe { self.map(vpn, ppn, &[PageACL::Read, PageACL::Write]) };
+    unsafe fn map_data(&mut self, vpn: usize, ppn: usize, pages: usize) {
+        unsafe { self.map(vpn, ppn, pages, &[PageACL::Read, PageACL::Write]) };
     }
     /**
      * Map as read-execute acl
      */
-    unsafe fn map_text(&mut self, vpn: usize, ppn: usize) {
-        unsafe { self.map(vpn, ppn, &[PageACL::Read, PageACL::Execute]) };
+    unsafe fn map_text(&mut self, vpn: usize, ppn: usize, pages: usize) {
+        unsafe { self.map(vpn, ppn, pages, &[PageACL::Read, PageACL::Execute]) };
     }
     /**
      * Unset the map.
@@ -55,11 +53,12 @@ pub trait PageManagement {
      * Args:
      * * `vpn`: Virtual Page Number.
      */
-    unsafe fn unmap(&mut self, vpn: usize);
+    unsafe fn unmap(&mut self, vpn: usize, pages: usize);
     /**
      * Switch to the page directory.
      */
     unsafe fn switch_to(&self);
+    unsafe fn refresh(&self);
     /** map kernel memory into vm */
     unsafe fn map_kernel_region(&mut self) {
         unsafe {

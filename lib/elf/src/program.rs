@@ -9,6 +9,9 @@ const FLAGS_R: usize = 0x04;
 pub enum Type {
     Null,
     Load,
+    Dynamic,
+    Interp,
+    Note,
 }
 
 #[derive(Debug)]
@@ -34,11 +37,13 @@ impl Program {
         let p_type = match int!(u32, bytes, 0, endian) {
             0x00 => Type::Null,
             0x01 => Type::Load,
+            0x02 => Type::Dynamic,
+            0x03 => Type::Interp,
+            0x04 => Type::Note,
             _ => Type::Null,
         };
 
         /* parse flags */
-
         let mut p_flags = Vec::new();
         let flags_bits = if class == ELF_CLASS_64 {
             int!(u64, bytes, 4, endian) as usize

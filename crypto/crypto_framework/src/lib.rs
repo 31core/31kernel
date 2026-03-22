@@ -14,6 +14,23 @@ pub trait BlockCipher {
     fn block_decrypt(&self, block: &mut [u8]);
 }
 
+pub trait StreamCipher {
+    /** key size in bytes */
+    fn key_size() -> usize
+    where
+        Self: Sized;
+    /** nonce size in bytes */
+    fn nonce_size() -> usize
+    where
+        Self: Sized;
+    fn set_key(&mut self, key: &[u8]);
+    fn set_nonce(&mut self, key: &[u8]);
+    fn encrypt(&mut self, block: &mut [u8]);
+    fn decrypt(&mut self, block: &mut [u8]) {
+        self.encrypt(block);
+    }
+}
+
 pub trait Hash {
     /** digest length in bytes */
     fn digest_length() -> usize

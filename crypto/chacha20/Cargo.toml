@@ -1,0 +1,8 @@
+[package]
+name = "chacha20"
+version = "0.1.0"
+edition = "2024"
+description = "Software implementation of ChaCha20 algorithm."
+
+[dependencies]
+crypto_framework = { path = "../crypto_framework" }
