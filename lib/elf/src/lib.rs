@@ -5,7 +5,9 @@ extern crate alloc;
 use crate::program::Program;
 use alloc::vec::Vec;
 
-mod program;
+pub mod program;
+
+pub use program::{Flags as PFlags, Type as PType};
 
 const ELF_HEADER: &[u8] = &[0x7f, 0x45, 0x4c, 0x46];
 const ELF_CLASS_32: u8 = 1;
@@ -134,8 +136,7 @@ impl Elf {
                 (sec * PH_SIZE_64, (sec + 1) * PH_SIZE_64)
             };
             let section =
-                Program::parse(&bytes[e_phoff + sh_start..e_phoff + sh_end], class, endian)
-                    .unwrap();
+                Program::parse(&bytes[e_phoff + sh_start..e_phoff + sh_end], class, endian);
             sections.push(section);
         }
 

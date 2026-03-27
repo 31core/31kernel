@@ -46,7 +46,7 @@ fn ssig1(x: u32) -> u32 {
 }
 
 pub struct Sha256 {
-    message_len: usize,
+    message_len: u64,
     w_table: [u32; 64],
     bytes_remain: [u8; 64],
     bytes_remain_len: usize,
@@ -74,7 +74,7 @@ impl Hash for Sha256 {
         SHA256_DIGEST_LEN
     }
     fn update(&mut self, mut message: &[u8]) {
-        self.message_len += 8 * message.len();
+        self.message_len += 8 * message.len() as u64;
 
         if self.bytes_remain_len > 0 {
             if self.bytes_remain_len + message.len() >= 64 {
@@ -116,7 +116,7 @@ impl Hash for Sha256 {
             self.update_h();
 
             let mut chunk = [0; 64];
-            chunk[56..64].copy_from_slice(&(self.message_len as u64).to_be_bytes());
+            chunk[56..64].copy_from_slice(&self.message_len.to_be_bytes());
             self.update_w_table(&chunk);
             self.update_h();
         } else {
@@ -124,7 +124,7 @@ impl Hash for Sha256 {
             chunk[..self.bytes_remain_len]
                 .copy_from_slice(&self.bytes_remain[..self.bytes_remain_len]);
             chunk[self.bytes_remain_len] = 0x80;
-            chunk[56..64].copy_from_slice(&(self.message_len as u64).to_be_bytes());
+            chunk[56..64].copy_from_slice(&self.message_len.to_be_bytes());
             self.update_w_table(&chunk);
             self.update_h();
         }

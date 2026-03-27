@@ -14,7 +14,7 @@ pub enum Type {
     Note,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Flags {
     Exec,
     Write,
@@ -33,7 +33,7 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn parse(bytes: &[u8], class: u8, endian: u8) -> Result<Self, ()> {
+    pub fn parse(bytes: &[u8], class: u8, endian: u8) -> Self {
         let p_type = match int!(u32, bytes, 0, endian) {
             0x00 => Type::Null,
             0x01 => Type::Load,
@@ -90,7 +90,7 @@ impl Program {
             int!(u64, bytes, 40, endian) as usize
         };
 
-        Ok(Self {
+        Self {
             p_type,
             p_flags,
             p_offset,
@@ -98,6 +98,6 @@ impl Program {
             p_addr,
             p_filesz,
             p_memsz,
-        })
+        }
     }
 }

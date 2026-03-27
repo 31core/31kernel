@@ -1,5 +1,6 @@
 .altmacro
 .globl mtrap, strap
+.globl trap_switch_to_s_level
 
 .macro SAVE n
     sd x\n, \n * 8(sp)
@@ -46,3 +47,27 @@ strap:
     .endr
     addi sp, sp, 32 * 8
     sret
+
+.section .text.strap
+trap_switch_to_s_level:
+    csrr t0, mstatus
+    li t1, ~0x1800
+    and t0, t0, t1
+    # set MPP to S
+    li t1, 0x800
+    or t0, t0, t1
+    csrw mstatus, t0
+
+    li t0, 0x1f
+    csrw pmpcfg0, t0
+    li t0, -1
+    csrw pmpaddr0, t0
+
+    csrw satp, zero
+
+    # set return address
+    csrr t0, mepc
+    addi t0, t0, 4
+    csrw mepc, t0
+
+    mret

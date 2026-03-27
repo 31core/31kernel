@@ -59,6 +59,7 @@ pub trait PageManagement {
      */
     unsafe fn switch_to(&self);
     unsafe fn refresh(&self);
+    unsafe fn destroy(&mut self);
     /** map kernel memory into vm */
     unsafe fn map_kernel_region(&mut self) {
         unsafe {

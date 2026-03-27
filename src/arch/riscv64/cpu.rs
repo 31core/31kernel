@@ -83,34 +83,22 @@ pub mod asm_wrap {
     }
 }
 
-#[derive(Clone, Copy)]
-#[repr(C)]
-pub struct Context {
-    regs: [u64; 32],
-}
-
-#[unsafe(link_section = ".text.strap")]
-unsafe fn trap_switch_to_s_level() {
-    unsafe {
-        let mut mstatus: u64;
-        asm!("csrr {}, mstatus", out(reg) mstatus);
-        mstatus &= !0x1800;
-        mstatus |= 0x800; // set MPP to S
-        asm!("csrw mstatus, {}", in(reg) mstatus);
-        asm!("csrw pmpcfg0, 0x1f");
-        asm!("csrw pmpaddr0, {}", in(reg) -1);
-        asm!("csrw satp, 0");
-
-        mepc_w(mepc_r() + 4); // set return address
-        asm!("mret");
-    }
+unsafe extern "C" {
+    fn trap_switch_to_s_level();
 }
 
 pub unsafe fn switch_to_s_level() {
     unsafe {
         let mtvec = mtvec_r();
-        mtvec_w(trap_switch_to_s_level as *const usize as usize as u64);
+        mtvec_w(trap_switch_to_s_level as *const u64 as u64);
         asm!("ecall");
         mtvec_w(mtvec);
     }
+}
+
+#[derive(Default)]
+#[repr(C)]
+pub struct Context {
+    x: [u64; 30],
+    epc: u64,
 }

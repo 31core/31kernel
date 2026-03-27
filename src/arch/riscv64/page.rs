@@ -1,19 +1,44 @@
+use crate::{
+    PAGE_SIZE,
+    page::{PageACL, PageManagement},
+};
 use alloc::{
     alloc::{Layout, alloc_zeroed, dealloc},
     vec::Vec,
 };
 use core::arch::asm;
 
-use crate::{
-    PAGE_SIZE,
-    page::{PageACL, PageManagement},
-};
-
 pub const MODE_SV39: u64 = 8;
 
 const PTES_PER_DIR: usize = 512;
 
 const MIB: usize = 1024 * 1024;
+
+/** Allocate a page directory.
+ *
+ * Return: Pysical Page Number
+ */
+unsafe fn alloc_page_dir() -> u64 {
+    unsafe {
+        alloc_zeroed(
+            Layout::new::<[u8; PAGE_SIZE]>()
+                .align_to(PAGE_SIZE)
+                .unwrap(),
+        ) as u64
+            >> 12
+    }
+}
+/** Release a page directory. */
+unsafe fn release_page_dir(ppn: u64) {
+    unsafe {
+        dealloc(
+            (ppn << 12) as *mut u8,
+            Layout::new::<[u8; PAGE_SIZE]>()
+                .align_to(PAGE_SIZE)
+                .unwrap(),
+        )
+    };
+}
 
 /**
  * Set RV64 SATP register.
@@ -25,13 +50,6 @@ const MIB: usize = 1024 * 1024;
 pub unsafe fn set_satp(mut ppn: u64, mode: u64) {
     ppn |= mode << 60;
     unsafe { asm!("csrw satp, {}", in(reg) ppn) };
-}
-
-pub unsafe fn get_satp() -> u64 {
-    let mut satp;
-    unsafe { asm!("csrr {}, satp", out(reg) satp) };
-
-    satp
 }
 
 pub const PTE_V_FLAG: u64 = 1;
@@ -80,6 +98,9 @@ impl PageTableEntry {
     fn ppn(&self) -> u64 {
         self.0 >> 10
     }
+    fn is_leaf(&self) -> bool {
+        self.r() || self.w() || self.x()
+    }
 }
 
 pub struct PageDirectory {
@@ -113,44 +134,11 @@ pub struct PageManager {
 impl PageManager {
     pub unsafe fn new() -> Self {
         unsafe {
-            let root_pdir = Self::alloc_page_dir();
+            let root_pdir = alloc_page_dir();
             Self {
                 root: PageDirectory::from_ppn(root_pdir),
             }
         }
-    }
-    pub unsafe fn from_satp() -> Self {
-        unsafe {
-            let addr = get_satp() & 0xfffffffffff;
-            Self {
-                root: PageDirectory::from_ppn(addr),
-            }
-        }
-    }
-    /** Allocate a page directory.
-     *
-     * Return: Pysical Page Number
-     */
-    pub unsafe fn alloc_page_dir() -> u64 {
-        unsafe {
-            alloc_zeroed(
-                Layout::new::<[u8; PAGE_SIZE]>()
-                    .align_to(PAGE_SIZE)
-                    .unwrap(),
-            ) as u64
-                >> 12
-        }
-    }
-    /** Release a page directory. */
-    pub unsafe fn release_page_dir(ppn: u64) {
-        unsafe {
-            dealloc(
-                (ppn << 12) as *mut u8,
-                Layout::new::<[u8; PAGE_SIZE]>()
-                    .align_to(PAGE_SIZE)
-                    .unwrap(),
-            )
-        };
     }
     pub fn root_ppn(&self) -> u64 {
         self.root.ptes as u64 >> 12
@@ -163,7 +151,7 @@ impl PageManager {
         let v1_pte = unsafe { self.root.ptes.add(v1).read_volatile() };
         let v1_pte = if v1_pte.0 == 0 {
             /* v1 PTE is empty */
-            let ppn = unsafe { Self::alloc_page_dir() };
+            let ppn = unsafe { alloc_page_dir() };
             let pte = PageTableEntry(ppn << 10 | PTE_V_FLAG);
             self.root.set_pte(v1, pte);
 
@@ -176,7 +164,7 @@ impl PageManager {
         let v2_pte = unsafe { v2_pdir.ptes.add(v2).read_volatile() };
         let v2_pte = if v2_pte.0 == 0 {
             /* v2 PTE is empty */
-            let ppn = unsafe { Self::alloc_page_dir() };
+            let ppn = unsafe { alloc_page_dir() };
             let pte = PageTableEntry(ppn << 10 | PTE_V_FLAG);
             v2_pdir.set_pte(v2, pte);
 
@@ -196,7 +184,7 @@ impl PageManager {
         let v1_pte = unsafe { self.root.ptes.add(v1).read_volatile() };
         let v1_pte = if v1_pte.0 == 0 {
             /* v1 PTE is empty */
-            let ppn = unsafe { Self::alloc_page_dir() };
+            let ppn = unsafe { alloc_page_dir() };
             let pte = PageTableEntry(ppn << 10 | PTE_V_FLAG);
             self.root.set_pte(v1, pte);
 
@@ -206,7 +194,7 @@ impl PageManager {
         };
 
         let mut v2_pdir = PageDirectory::from_ppn(v1_pte.ppn());
-        let v2_pte = PageTableEntry((ppn as u64) << 10 | mode);
+        let v2_pte = PageTableEntry((ppn as u64 >> 9) << 10 | mode);
         v2_pdir.set_pte(v2, v2_pte);
     }
     unsafe fn unmap_2m(&mut self, vpn: usize, pages: usize) -> usize {
@@ -241,7 +229,7 @@ impl PageManager {
         } else {
             if v2_pdir.is_empty() {
                 unsafe {
-                    Self::release_page_dir(v1_pte.ppn());
+                    release_page_dir(v1_pte.ppn());
                     self.root.ptes.add(v1).write_volatile(PageTableEntry(0));
                 }
             }
@@ -291,7 +279,7 @@ impl PageManagement for PageManager {
             let v2_pdir = PageDirectory::from_ppn(v1_pte.ppn());
             let v2_pte: PageTableEntry = unsafe { v2_pdir.ptes.add(v2).read_volatile() };
             /* 2MiB huge page */
-            if !v2_pte.v() {
+            if !v2_pte.is_leaf() {
                 let ummap_pages = unsafe { self.unmap_2m(vpn, pages) };
                 vpn += ummap_pages;
                 pages -= ummap_pages;
@@ -302,14 +290,14 @@ impl PageManagement for PageManager {
             unsafe { v3_pdir.ptes.add(v3).write_volatile(PageTableEntry(0)) };
             if v3_pdir.is_empty() {
                 unsafe {
-                    Self::release_page_dir(v2_pte.ppn());
+                    release_page_dir(v2_pte.ppn());
                     v2_pdir.ptes.add(v2).write_volatile(PageTableEntry(0));
                 }
             }
 
             if v2_pdir.is_empty() {
                 unsafe {
-                    Self::release_page_dir(v1_pte.ppn());
+                    release_page_dir(v1_pte.ppn());
                     self.root.ptes.add(v1).write_volatile(PageTableEntry(0));
                 }
             }
@@ -322,5 +310,21 @@ impl PageManagement for PageManager {
     }
     unsafe fn refresh(&self) {
         unsafe { asm!("sfence.vma") };
+    }
+    unsafe fn destroy(&mut self) {
+        for v1 in 0..PTES_PER_DIR {
+            let v1_pte: PageTableEntry = unsafe { self.root.ptes.add(v1).read_volatile() };
+            let v2_pdir = PageDirectory::from_ppn(v1_pte.ppn());
+
+            for v2 in 0..PTES_PER_DIR {
+                let v2_pte: PageTableEntry = unsafe { v2_pdir.ptes.add(v2).read_volatile() };
+                /* point to l2 table */
+                if !v2_pte.is_leaf() {
+                    unsafe { release_page_dir(v2_pte.ppn()) };
+                }
+            }
+            unsafe { release_page_dir(v1_pte.ppn()) };
+        }
+        unsafe { release_page_dir(self.root_ppn()) };
     }
 }

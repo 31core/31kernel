@@ -31,6 +31,25 @@ pub trait StreamCipher {
     }
 }
 
+pub trait CryptoRandgen {
+    fn seed_size() -> usize;
+    fn reseed(&mut self, seed: &[u8]);
+    fn gen_bytes(&mut self, buf: &mut [u8]);
+}
+
+impl<T: StreamCipher> CryptoRandgen for T {
+    fn seed_size() -> usize {
+        Self::key_size() + Self::nonce_size()
+    }
+    fn reseed(&mut self, seed: &[u8]) {
+        self.set_key(&seed[..Self::key_size()]);
+        self.set_nonce(&seed[Self::key_size()..]);
+    }
+    fn gen_bytes(&mut self, buf: &mut [u8]) {
+        self.encrypt(buf);
+    }
+}
+
 pub trait Hash {
     /** digest length in bytes */
     fn digest_length() -> usize
