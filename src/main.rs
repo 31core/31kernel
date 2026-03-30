@@ -51,12 +51,14 @@ const PTR_BYTES: usize = size_of::<usize>();
  * Initialize the CPU
 */
 fn cpu_init() {
+    #[cfg(target_arch = "aarch64")]
     unsafe {
-        #[cfg(target_arch = "riscv64")]
-        {
-            arch::riscv64::enable_timer();
-            arch::riscv64::cpu::switch_to_s_level();
-        }
+        arch::arm64::cpu::cpu_init();
+    }
+    #[cfg(target_arch = "riscv64")]
+    unsafe {
+        arch::riscv64::enable_timer();
+        arch::riscv64::cpu::switch_to_s_level();
     }
 }
 

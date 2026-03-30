@@ -1,4 +1,4 @@
-use crate::{PAGE_SIZE, buddy_allocator::BUDDY_ALLOCATOR, page::PageManagement};
+use crate::{PAGE_SIZE, alloc_pages, page::PageManagement};
 use alloc::{
     boxed::Box,
     {vec, vec::Vec},
@@ -52,7 +52,7 @@ impl Task {
                 let v_page = prog.v_addr / PAGE_SIZE;
                 let v_pages = prog.v_addr.div_ceil(PAGE_SIZE);
 
-                let p_page = unsafe { (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(v_pages) };
+                let p_page = alloc_pages!(v_pages);
                 if prog.p_flags.contains(&PFlags::Exec) {
                     unsafe { page.map_text(v_page, p_page, v_pages) };
                 } else if prog.p_flags.contains(&PFlags::Write) {
@@ -116,7 +116,7 @@ pub unsafe fn kernel_fork() {
         let scheduler = (*(&raw mut SCHEDULER)).assume_init_mut();
         let new_task = Task {
             pid: scheduler.max_pid + 1,
-            page: Box::new(crate::arch::riscv64::page::PageManager::new()),
+            page: Box::new(PageManager::new()),
             ppid: scheduler.tasks[scheduler.current_tsk_idx].pid,
             nice: scheduler.tasks[scheduler.current_tsk_idx].nice,
             context: Context::default(),

@@ -2,6 +2,7 @@
 
 use core::ptr::addr_of;
 
+#[derive(PartialEq)]
 pub enum PageACL {
     Read,
     Write,
@@ -17,6 +18,31 @@ macro_rules! map_range {
             (addr_of!($end) as usize >> 12) - (addr_of!($start) as usize >> 12),
         );
     };
+}
+
+#[macro_export]
+macro_rules! alloc_pages {
+    ($pages_count:expr) => {{
+        use $crate::page::PageAllocator;
+        #[allow(unused_unsafe)]
+        let allocator = unsafe { &mut (*(&raw mut $crate::buddy_allocator::BUDDY_ALLOCATOR)) };
+        allocator.alloc_pages($pages_count)
+    }};
+}
+
+#[macro_export]
+macro_rules! free_pages {
+    ($pages_start:expr, $pages_count:expr) => {{
+        use $crate::page::PageAllocator;
+        #[allow(unused_unsafe)]
+        let allocator = unsafe { &mut (*(&raw mut $crate::buddy_allocator::BUDDY_ALLOCATOR)) };
+        allocator.free_pages($pages_start, $pages_count)
+    }};
+}
+
+pub trait PageAllocator {
+    fn alloc_pages(&mut self, pages_count: usize) -> usize;
+    fn free_pages(&mut self, page_start: usize, pages_count: usize);
 }
 
 pub trait PageManagement {

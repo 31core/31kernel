@@ -2,10 +2,7 @@
  * An mcache allocator for small objects allocation.
  */
 
-use crate::{
-    PAGE_SIZE,
-    buddy_allocator::{BUDDY_ALLOCATOR, ceil_to_power_2},
-};
+use crate::{PAGE_SIZE, alloc_pages, buddy_allocator::ceil_to_power_2, free_pages};
 use alloc::alloc::{alloc, dealloc};
 use core::{
     alloc::{GlobalAlloc, Layout},
@@ -261,8 +258,7 @@ impl CacheManager {
         unsafe {
             let page_num = ceil_to_power_2(CACHE_CELL_COUNT * cell_size / PAGE_SIZE);
             let offset = size_of::<CachePage>().div_ceil(cell_size); // offest in n cells size
-            let cache_addr =
-                (PAGE_SIZE * (*(&raw mut BUDDY_ALLOCATOR)).alloc_pages(page_num)) as *mut CachePage;
+            let cache_addr = (PAGE_SIZE * alloc_pages!(page_num)) as *mut CachePage;
             let mut cache = CachePage {
                 page_start: cache_addr as *mut u8,
                 page_count: page_num,
@@ -329,10 +325,7 @@ impl CacheManager {
             }
             /* use buddy allocator for large object */
             else {
-                (PAGE_SIZE
-                    * (*(&raw mut BUDDY_ALLOCATOR))
-                        .alloc_pages(ceil_to_power_2(layout.size() / PAGE_SIZE)))
-                    as *mut u8
+                (PAGE_SIZE * alloc_pages!(layout.size() / PAGE_SIZE)) as *mut u8
             }
         }
     }
@@ -369,9 +362,9 @@ unsafe impl GlobalAlloc for CacheManager {
                         /* object cache is empty */
                         if cache.as_ref().used_count == 0 {
                             /* free object cache */
-                            (*(&raw mut BUDDY_ALLOCATOR)).free_pages(
+                            free_pages!(
                                 cache.as_ref().page_start as usize / PAGE_SIZE,
-                                cache.as_ref().page_count,
+                                cache.as_ref().page_count
                             );
                             *i = None;
 
@@ -408,10 +401,7 @@ unsafe impl GlobalAlloc for CacheManager {
                     }
                 }
             } else {
-                (*(&raw mut BUDDY_ALLOCATOR)).free_pages(
-                    ptr as usize / PAGE_SIZE,
-                    ceil_to_power_2(layout.size() / PAGE_SIZE),
-                );
+                free_pages!(ptr as usize / PAGE_SIZE, layout.size() / PAGE_SIZE);
             }
         }
     }

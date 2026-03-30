@@ -2,6 +2,8 @@
  * Buddy allocator implementation for the kernel heap.
  */
 
+use crate::page::PageAllocator;
+
 pub const NODE_COMPATIBILITY: usize = 8196;
 const BUDDY_ALLOC_MAX_POW: usize = 64;
 
@@ -128,11 +130,14 @@ impl BuddyAllocator {
         self.pows[pow] = node.next;
         node
     }
+}
+
+impl PageAllocator for BuddyAllocator {
     /**
      * Allocate pages and returns the start page number, where `page_num` must be n power of 2.
      */
-    pub fn alloc_pages(&mut self, pages_count: usize) -> usize {
-        assert!(pages_count.is_power_of_two());
+    fn alloc_pages(&mut self, pages_count: usize) -> usize {
+        let pages_count = ceil_to_power_2(pages_count);
 
         self.free -= pages_count;
 
@@ -160,8 +165,8 @@ impl BuddyAllocator {
 
         panic!("No enough memory to allocate");
     }
-    pub fn free_pages(&mut self, page_start: usize, mut pages_count: usize) {
-        assert!(pages_count.is_power_of_two());
+    fn free_pages(&mut self, page_start: usize, pages_count: usize) {
+        let mut pages_count = ceil_to_power_2(pages_count);
 
         self.free += pages_count;
 
