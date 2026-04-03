@@ -44,15 +44,15 @@ impl Task {
     pub fn create_from_elf(elf_bytes: &[u8]) -> Result<Self, ElfError> {
         let elf = Elf::parse(elf_bytes)?;
         let scheduler = unsafe { (*(&raw mut SCHEDULER)).assume_init_mut() };
-        let mut page = unsafe { PageManager::new() };
+        let mut page = unsafe { Box::new(PageManager::new()) };
         unsafe { page.map_kernel_region() };
 
         for prog in &elf.p_headers {
             if let PType::Load = prog.p_type {
                 let v_page = prog.v_addr / PAGE_SIZE;
-                let v_pages = prog.v_addr.div_ceil(PAGE_SIZE);
+                let v_pages = prog.p_memsz.div_ceil(PAGE_SIZE);
 
-                let p_page = alloc_pages!(v_pages);
+                let p_page = unsafe { alloc_pages!(v_pages) };
                 if prog.p_flags.contains(&PFlags::Exec) {
                     unsafe { page.map_text(v_page, p_page, v_pages) };
                 } else if prog.p_flags.contains(&PFlags::Write) {
@@ -75,7 +75,7 @@ impl Task {
         Ok(Self {
             pid: scheduler.max_pid + 1,
             ppid: scheduler.tasks[scheduler.current_tsk_idx].pid,
-            page: Box::new(page),
+            page,
             nice: scheduler.tasks[scheduler.current_tsk_idx].nice,
             context: Context::default(),
         })

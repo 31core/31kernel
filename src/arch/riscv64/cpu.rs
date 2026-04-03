@@ -91,8 +91,8 @@ pub unsafe fn switch_to_s_level() {
     unsafe {
         let mtvec = mtvec_r();
         mtvec_w(trap_switch_to_s_level as *const u64 as u64);
+        asm!("mv t0, {}", in(reg) mtvec);
         asm!("ecall");
-        mtvec_w(mtvec);
     }
 }
 

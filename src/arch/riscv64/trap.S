@@ -48,8 +48,10 @@ strap:
     addi sp, sp, 32 * 8
     sret
 
-.section .text.strap
+.align 2
 trap_switch_to_s_level:
+    csrw mstatus, t0
+
     csrr t0, mstatus
     li t1, ~0x1800
     and t0, t0, t1

@@ -12,7 +12,7 @@ use core::{
 
 const CACHE_NUM: usize = 1024;
 const CACHE_CELL_COUNT: usize = 512;
-const SIZE_CLASS_COUNT: usize = 16;
+const SIZE_CLASS_COUNT: usize = 17;
 
 /** Alias to `GLOBAL_ALLOCATOR`, when used as the first allocator. */
 #[doc(hidden)]
@@ -41,6 +41,7 @@ fn size_to_class(size: usize) -> Option<(usize, usize)> {
         KB,
         2 * KB,
         4 * KB,
+        8 * KB,
         16 * KB,
         32 * KB,
         64 * KB,
@@ -57,13 +58,8 @@ fn size_to_class(size: usize) -> Option<(usize, usize)> {
 
 fn calc_header_padding(align: usize) -> usize {
     let ptr_size = size_of::<*mut CacheManager>();
-    let mut n_align = align;
-    loop {
-        if n_align >= ptr_size {
-            return n_align - ptr_size;
-        }
-        n_align += align;
-    }
+    let offset = ptr_size;
+    (align - (offset % align)) % align
 }
 
 #[global_allocator]
@@ -325,7 +321,7 @@ impl CacheManager {
             }
             /* use buddy allocator for large object */
             else {
-                (PAGE_SIZE * alloc_pages!(layout.size() / PAGE_SIZE)) as *mut u8
+                (PAGE_SIZE * alloc_pages!(layout.size().div_ceil(PAGE_SIZE))) as *mut u8
             }
         }
     }
@@ -401,7 +397,7 @@ unsafe impl GlobalAlloc for CacheManager {
                     }
                 }
             } else {
-                free_pages!(ptr as usize / PAGE_SIZE, layout.size() / PAGE_SIZE);
+                free_pages!(ptr as usize / PAGE_SIZE, layout.size().div_ceil(PAGE_SIZE));
             }
         }
     }

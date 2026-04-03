@@ -24,9 +24,8 @@ macro_rules! map_range {
 macro_rules! alloc_pages {
     ($pages_count:expr) => {{
         use $crate::page::PageAllocator;
-        #[allow(unused_unsafe)]
-        let allocator = unsafe { &mut (*(&raw mut $crate::buddy_allocator::BUDDY_ALLOCATOR)) };
-        allocator.alloc_pages($pages_count)
+        let allocator = &mut (*(&raw mut $crate::buddy_allocator::BUDDY_ALLOCATOR));
+        allocator.assume_init_mut().alloc_pages($pages_count)
     }};
 }
 
@@ -34,9 +33,10 @@ macro_rules! alloc_pages {
 macro_rules! free_pages {
     ($pages_start:expr, $pages_count:expr) => {{
         use $crate::page::PageAllocator;
-        #[allow(unused_unsafe)]
-        let allocator = unsafe { &mut (*(&raw mut $crate::buddy_allocator::BUDDY_ALLOCATOR)) };
-        allocator.free_pages($pages_start, $pages_count)
+        let allocator = &mut (*(&raw mut $crate::buddy_allocator::BUDDY_ALLOCATOR));
+        allocator
+            .assume_init_mut()
+            .free_pages($pages_start, $pages_count)
     }};
 }
 

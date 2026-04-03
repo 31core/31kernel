@@ -44,6 +44,7 @@ unsafe extern "C" {
 }
 
 const MEM_SIZE: usize = 128 * 1024 * 1024;
+const STACK_SIZE: usize = 64 * 4096;
 const PAGE_SIZE: usize = 4096;
 const PTR_BYTES: usize = size_of::<usize>();
 
@@ -68,7 +69,7 @@ pub extern "C" fn kernel_main() {
     cpu_init();
 
     unsafe {
-        (*(&raw mut buddy_allocator::BUDDY_ALLOCATOR)).init(
+        buddy_allocator::init(
             addr_of!(HEAP_START) as usize / PAGE_SIZE,
             MEM_SIZE / PAGE_SIZE,
         );
@@ -84,12 +85,10 @@ pub extern "C" fn kernel_main() {
 }
 
 fn clear_bss() {
+    let bss_start = unsafe { addr_of!(BSS_START).add(STACK_SIZE) } as usize;
+    let bss_end = addr_of!(BSS_END) as usize;
     unsafe {
-        core::ptr::write_bytes(
-            addr_of!(BSS_START) as *mut u8,
-            0,
-            addr_of!(BSS_END) as usize - addr_of!(BSS_START) as usize,
-        );
+        core::ptr::write_bytes(bss_start as *mut u8, 0, bss_end - bss_start);
     }
 }
 

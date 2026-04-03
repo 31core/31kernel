@@ -180,7 +180,7 @@ impl PageManager {
         let l2_pte = unsafe { self.root.get_not_empty(l2) };
 
         let l1_pt = PageTable::from_ppn(l2_pte.ppn());
-        let l1_pte = PageTableEntry((ppn as u64 >> 9) << 10 | mode);
+        let l1_pte = PageTableEntry((ppn as u64) << 10 | mode);
         l1_pt.set_pte(l1, l1_pte);
     }
     unsafe fn unmap_2m(&mut self, vpn: usize, pages: usize) -> usize {

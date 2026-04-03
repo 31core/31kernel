@@ -7,8 +7,6 @@ SECTIONS
     kernel_start = .;
     .text : {
         *(.text.entry)
-        . = ALIGN(4);
-        *(.text.strap)
         *(.text .text.*)
     }
 

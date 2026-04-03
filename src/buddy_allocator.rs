@@ -3,20 +3,12 @@
  */
 
 use crate::page::PageAllocator;
+use core::mem::MaybeUninit;
 
 pub const NODE_COMPATIBILITY: usize = 8196;
 const BUDDY_ALLOC_MAX_POW: usize = 64;
 
-pub static mut BUDDY_ALLOCATOR: BuddyAllocator = BuddyAllocator {
-    start: 0,
-    free: 0,
-    pows: [None; BUDDY_ALLOC_MAX_POW],
-    free_start: None,
-    free_nodes: [FreeNode {
-        page_number: 0,
-        next: None,
-    }; NODE_COMPATIBILITY],
-};
+pub static mut BUDDY_ALLOCATOR: MaybeUninit<BuddyAllocator> = MaybeUninit::zeroed();
 
 #[derive(Clone, Copy, Debug, Default)]
 /**
@@ -33,6 +25,14 @@ impl FreeNode {
             page_number,
             ..Default::default()
         }
+    }
+}
+
+pub unsafe fn init(start_page: usize, pages_count: usize) {
+    unsafe {
+        (*(&raw mut BUDDY_ALLOCATOR))
+            .assume_init_mut()
+            .init(start_page, pages_count);
     }
 }
 
