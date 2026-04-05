@@ -3,7 +3,7 @@
 _start:
     ldr x0, =boot_stack_top
     mov sp, x0
-    bl kernel_main
+    b kernel_main
 
     .section .bss.stack
     .space 16 * 4096

@@ -7,7 +7,7 @@ _start:
 
     la t0, strap
     csrw stvec, t0
-    call kernel_main
+    j kernel_main
 
     .section .bss.stack
     .space 16 * 4096

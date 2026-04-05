@@ -11,14 +11,14 @@ use core::arch::asm;
 
 const PTES_PER_DIR: usize = 512;
 
-const TYPE_VALID: u64 = 0x01;
-const TYPE_BLOCK_ENTRY: u64 = 0x00;
-const TYPE_TABLE_ENTRY: u64 = 0x10;
-const TYPE_PAGE_ENTRY: u64 = 0x10;
+const TYPE_VALID: u64 = 0b01;
+const TYPE_BLOCK_ENTRY: u64 = 0b00;
+const TYPE_TABLE_ENTRY: u64 = 0b10;
+const TYPE_PAGE_ENTRY: u64 = 0b10;
 
-const AP1: u64 = 0b100000;
-const AP2_RO: u64 = 0b1000000;
-const AP2_RW: u64 = 0b0000000;
+const AP1: u64 = 0b1000000;
+const AP2_RO: u64 = 0b10000000;
+const AP2_RW: u64 = 0b00000000;
 
 const AF: u64 = 1 << 10;
 
@@ -100,18 +100,18 @@ impl PageTable {
         }
         true
     }
-    /** Get an entry and ensure the next level of table is not empty */
+    /** Get a descriptor and ensure the next level of table is not empty */
     unsafe fn get_not_empty(&self, index: usize) -> TableDescriptor {
-        let pte = unsafe { self.ptes.add(index).read_volatile() };
-        if pte.0 == 0 {
-            /* PTE is empty */
+        let td = unsafe { self.ptes.add(index).read_volatile() };
+        if td.0 == 0 {
+            /* descriptor is empty */
             let ppn = unsafe { alloc_page_dir() };
-            let pte = TableDescriptor(ppn << 12 | TYPE_VALID | TYPE_TABLE_ENTRY);
-            self.set_descriptor(index, pte);
+            let td = TableDescriptor(ppn << 12 | TYPE_VALID | TYPE_TABLE_ENTRY);
+            self.set_descriptor(index, td);
 
-            pte
+            td
         } else {
-            pte
+            td
         }
     }
 }
@@ -171,7 +171,6 @@ impl PageManager {
 
 impl PageManagement for PageManager {
     unsafe fn map(&mut self, mut vpn: usize, mut ppn: usize, mut pages: usize, mode: &[PageACL]) {
-        /* convert ACLs list into riscv PTE mode field bits */
         let mut mode_u64 = 0;
         if mode.contains(&PageACL::User) {
             mode_u64 |= AP1;
