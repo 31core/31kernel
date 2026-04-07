@@ -11,8 +11,7 @@ use core::{
 };
 
 const CACHE_NUM: usize = 1024;
-const CACHE_CELL_COUNT: usize = 512;
-const SIZE_CLASS_COUNT: usize = 17;
+const SIZE_CLASS_COUNT: usize = 14;
 
 /** Alias to `GLOBAL_ALLOCATOR`, when used as the first allocator. */
 #[doc(hidden)]
@@ -29,30 +28,36 @@ macro_rules! ref_to_ptr {
     };
 }
 
-/** Check if a size of object can be allocated with a cache and get the cache size if so. */
-fn size_to_class(size: usize) -> Option<(usize, usize)> {
+/**
+ * Check if a size of object can be allocated with a cache and get the cache size if so.
+ *
+ * Returns `None` if the size is too large for cache allocation,
+ * and otherwise `Some(((cell_size, cell_count), idx))`,
+ * where `cell_size` is the size of each cell in the cache,
+ * `cell_count` is the number of cells in each cache,
+ * and `idx` is the index of the cache class.
+ */
+fn size_to_class(size: usize) -> Option<((usize, usize), usize)> {
     const KB: usize = 1024;
-    const MB: usize = 1024 * KB;
-    const CACHE_SIZE: [usize; SIZE_CLASS_COUNT] = [
-        64,
-        128,
-        256,
-        512,
-        KB,
-        2 * KB,
-        4 * KB,
-        8 * KB,
-        16 * KB,
-        32 * KB,
-        64 * KB,
-        128 * KB,
-        256 * KB,
-        512 * KB,
-        MB,
-        2 * MB,
-        4 * MB,
+    const CACHE_SIZE: [(usize, usize); SIZE_CLASS_COUNT] = [
+        (64, 1024),
+        (128, 512),
+        (256, 256),
+        (512, 128),
+        (KB, 64),
+        (2 * KB, 32),
+        (4 * KB, 16),
+        (8 * KB, 8),
+        (16 * KB, 8),
+        (32 * KB, 8),
+        (64 * KB, 8),
+        (128 * KB, 8),
+        (256 * KB, 4),
+        (512 * KB, 2),
     ];
-    let idx = CACHE_SIZE.into_iter().position(|objsize| objsize >= size);
+    let idx = CACHE_SIZE
+        .into_iter()
+        .position(|(objsize, _)| objsize >= size);
     idx.map(|idx| (CACHE_SIZE[idx], idx))
 }
 
@@ -106,7 +111,7 @@ impl CacheCell {
         unsafe { (self.ptr as *const *mut u8).read() }
     }
     unsafe fn write_next(&self, next: *mut u8) {
-        unsafe { (self.ptr as *mut *const u8).write(next) };
+        unsafe { (self.ptr as *mut *mut u8).write(next) };
     }
 }
 
@@ -250,9 +255,15 @@ impl CacheManager {
         }
     }
     /** Add a new cache and allocate an object. */
-    unsafe fn new_cache_alloc(&mut self, cell_size: usize, idx: usize, padding: usize) -> *mut u8 {
+    unsafe fn new_cache_alloc(
+        &mut self,
+        cell_size: usize,
+        cell_count: usize,
+        idx: usize,
+        padding: usize,
+    ) -> *mut u8 {
         unsafe {
-            let page_num = ceil_to_power_2(CACHE_CELL_COUNT * cell_size / PAGE_SIZE);
+            let page_num = ceil_to_power_2(cell_count * cell_size / PAGE_SIZE);
             let offset = size_of::<CachePage>().div_ceil(cell_size); // offest in n cells size
             let cache_addr = (PAGE_SIZE * alloc_pages!(page_num)) as *mut CachePage;
             let mut cache = CachePage {
@@ -303,11 +314,11 @@ impl CacheManager {
             let padding = calc_header_padding(layout.align());
             let alloc_size = layout.size() + padding + size_of::<*mut Self>();
             /* allocate with cache manager */
-            if let Some((cell_size, idx)) = size_to_class(alloc_size) {
+            if let Some(((cell_size, cell_count), idx)) = size_to_class(alloc_size) {
                 if self.partial_counts[idx] > 0 {
                     self.cache_alloc(cell_size, idx, padding)
                 } else if !self.is_cache_full() {
-                    self.new_cache_alloc(cell_size, idx, padding)
+                    self.new_cache_alloc(cell_size, cell_count, idx, padding)
                 } else {
                     if let Some(mut next) = self.next_partial_free[idx] {
                         next.as_mut().cache_alloc(cell_size, idx, padding)
@@ -315,7 +326,7 @@ impl CacheManager {
                         self.next_free
                             .unwrap()
                             .as_mut()
-                            .new_cache_alloc(cell_size, idx, padding)
+                            .new_cache_alloc(cell_size, cell_count, idx, padding)
                     }
                 }
             }
