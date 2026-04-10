@@ -21,8 +21,6 @@ pub unsafe fn enable_timer() {
         mie_w(mie_r() | (1 << 5)); // set STIE flag for mie
         sie_w(sie_r() | (1 << 5)); // set STIE flag for sie
 
-        sstatus_w(sstatus_r() | 2); // set SIE flag
-
         /* enable sstc extension */
         let mut menvcfg: u64;
         asm!("csrr {}, menvcfg", out(reg) menvcfg);
@@ -40,4 +38,14 @@ pub unsafe fn enable_timer() {
 
 pub fn set_timer(interval: u64) {
     unsafe { asm!("csrw stimecmp, {}", in(reg) get_sys_time() + interval) };
+}
+
+#[inline(always)]
+pub unsafe fn enable_interrupts() {
+    unsafe { sstatus_w(sstatus_r() | 2) }; // set SIE flag
+}
+
+#[inline(always)]
+pub unsafe fn disable_interrupts() {
+    unsafe { sstatus_w(sstatus_r() & !2) }; // unset SIE flag
 }

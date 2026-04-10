@@ -3,11 +3,11 @@
 .globl trap_switch_to_s_level
 
 .macro SAVE n
-    sd x\n, \n * 8(sp)
+    sd x\n, (\n - 1) * 8(sp)
 .endm
 
 .macro LOAD n
-    ld x\n, \n * 8(sp)
+    ld x\n, (\n - 1) * 8(sp)
 .endm
 
 .align 2
@@ -31,21 +31,38 @@ mtrap:
 
 .align 2
 strap:
+    csrrw sp, sscratch, sp
     addi sp, sp, -32 * 8
-    .set n, 1
-    .rept 31
+    SAVE 1
+    /* save from x3 to x31 */
+    .set n, 3
+    .rept 29
         SAVE %n
         .set n, n + 1
     .endr
+    /* save task sp to ctx.x2 */
+    csrr t0, sscratch
+    sd t0, 2 * 8(sp)
+    /* save sepc to ctx.epc */
+    csrr t0, sepc
+    sd t0, 31 * 8(sp)
+    /* recover trap sp to sscratch */
+    addi t0, sp, 32 * 8
+    csrw sscratch, t0
+
     mv a0, sp
     call strap_handler
-    mv sp, a0
-    .set n, 1
-    .rept 31
+
+    ld t0, 31 * 8(sp)
+    csrw sepc, t0
+    LOAD 1
+    /* load from x3 to x31 */
+    .set n, 3
+    .rept 29
         LOAD %n
         .set n, n + 1
     .endr
-    addi sp, sp, 32 * 8
+    ld sp, 2 * 8(sp)
     sret
 
 .align 2

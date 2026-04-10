@@ -96,9 +96,9 @@ pub unsafe fn switch_to_s_level() {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 #[repr(C)]
 pub struct Context {
-    x: [u64; 31],
-    epc: u64,
+    pub x: [u64; 31],
+    pub epc: u64,
 }

@@ -10,11 +10,13 @@ mod device;
 mod kmsg;
 mod lang_items;
 mod mcache;
+mod mutex;
 mod page;
 mod rand;
 mod syscall;
 mod task;
 mod time;
+mod trap;
 mod vfs;
 
 use core::{arch::asm, ptr::addr_of};
@@ -75,6 +77,7 @@ pub extern "C" fn kernel_main() -> ! {
         );
 
         task::task_init();
+        trap::enable_interrupts();
     }
 
     rand::rand_init();

@@ -1,6 +1,8 @@
 //! Common code for page management
 
-use core::ptr::addr_of;
+use core::{mem::MaybeUninit, ptr::addr_of};
+
+pub static mut KERNEL_PT: MaybeUninit<usize> = MaybeUninit::uninit();
 
 #[derive(PartialEq)]
 pub enum PageACL {
