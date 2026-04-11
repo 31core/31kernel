@@ -147,17 +147,14 @@ impl PageAllocator for BuddyAllocator {
             if start.is_some() && 2_usize.pow(pow as u32) == pages_count {
                 return self.start + self.new_node(pow).page_number;
             } else if start.is_some() && 2_usize.pow(pow as u32) > pages_count {
-                let mut found_pages = 2_usize.pow(pow as u32);
-                let start_page = self.new_node(pow).page_number;
-                let mut new_page = start_page + found_pages;
+                let left_start = self.new_node(pow).page_number;
 
                 for i in (0..pow).rev() {
-                    found_pages /= 2;
-                    new_page -= found_pages;
-                    self.add_node(i, FreeNode::new(new_page));
+                    let right_start = left_start + 2_usize.pow(i as u32);
+                    self.add_node(i, FreeNode::new(right_start));
 
-                    if found_pages == pages_count {
-                        return self.start + new_page - found_pages;
+                    if pages_count == 2_usize.pow(i as u32) {
+                        return self.start + left_start;
                     }
                 }
             }

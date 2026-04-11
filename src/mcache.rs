@@ -263,15 +263,15 @@ impl CacheManager {
         padding: usize,
     ) -> *mut u8 {
         unsafe {
-            let page_num = ceil_to_power_2(cell_count * cell_size / PAGE_SIZE);
+            let page_count = ceil_to_power_2(cell_count * cell_size / PAGE_SIZE);
             let offset = size_of::<CachePage>().div_ceil(cell_size); // offest in n cells size
-            let cache_addr = (PAGE_SIZE * alloc_pages!(page_num)) as *mut CachePage;
+            let cache_addr = (PAGE_SIZE * alloc_pages!(page_count)) as *mut CachePage;
             let mut cache = CachePage {
                 page_start: cache_addr as *mut u8,
-                page_count: page_num,
+                page_count,
                 cell_size,
                 used_count: 0,
-                free_count: page_num * PAGE_SIZE / cell_size - offset,
+                free_count: page_count * PAGE_SIZE / cell_size - offset,
                 free_list_head: (cache_addr).byte_add(offset * cell_size) as *mut u8,
             };
             cache.init(offset);
@@ -364,7 +364,8 @@ unsafe impl GlobalAlloc for CacheManager {
                             }
                             (*mgr).partial_counts[idx] += 1;
                         }
-                        cache.as_mut().free_obj(ptr);
+                        let cell_ptr = ptr.sub(padding + size_of::<*mut Self>());
+                        cache.as_mut().free_obj(cell_ptr);
 
                         /* object cache is empty */
                         if cache.as_ref().used_count == 0 {

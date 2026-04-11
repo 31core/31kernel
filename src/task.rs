@@ -37,7 +37,7 @@ impl Scheduler {
         unsafe {
             page.map_kernel_region();
             page.map_data(self.trap_stack, self.trap_stack, 16);
-            page.map_data(stack_start, stack_start, 16);
+            page.map_data_u(stack_start, stack_start, 16);
         }
 
         for prog in &elf.p_headers {
@@ -47,11 +47,11 @@ impl Scheduler {
 
                 let p_page = unsafe { alloc_pages!(v_pages) };
                 if prog.p_flags.contains(&PFlags::Exec) {
-                    unsafe { page.map_text(v_page, p_page, v_pages) };
+                    unsafe { page.map_text_u(v_page, p_page, v_pages) };
                 } else if prog.p_flags.contains(&PFlags::Write) {
-                    unsafe { page.map_data(v_page, p_page, v_pages) };
+                    unsafe { page.map_data_u(v_page, p_page, v_pages) };
                 } else {
-                    unsafe { page.map_rodata(v_page, p_page, v_pages) };
+                    unsafe { page.map_rodata_u(v_page, p_page, v_pages) };
                 }
 
                 let p_off = prog.v_addr % PAGE_SIZE; // offset to start of the page
@@ -103,7 +103,7 @@ impl Scheduler {
     }
 }
 
-const KERNEL_PID: usize = 0;
+pub const KERNEL_PID: usize = 0;
 const NICE_DEFAULT: isize = 0;
 const NICE_MAX: isize = 19;
 const NICE_MIN: isize = -20;

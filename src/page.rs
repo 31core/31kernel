@@ -76,6 +76,38 @@ pub trait PageManagement {
         unsafe { self.map(vpn, ppn, pages, &[PageACL::Read, PageACL::Execute]) };
     }
     /**
+     * Map as read-execute acl, user accessible
+     */
+    unsafe fn map_text_u(&mut self, vpn: usize, ppn: usize, pages: usize) {
+        unsafe {
+            self.map(
+                vpn,
+                ppn,
+                pages,
+                &[PageACL::Read, PageACL::Execute, PageACL::User],
+            )
+        };
+    }
+    /**
+     * Map as read-only acl, user accessible
+     */
+    unsafe fn map_rodata_u(&mut self, vpn: usize, ppn: usize, pages: usize) {
+        unsafe { self.map(vpn, ppn, pages, &[PageACL::Read, PageACL::User]) };
+    }
+    /**
+     * Map as read-write acl, user accessible
+     */
+    unsafe fn map_data_u(&mut self, vpn: usize, ppn: usize, pages: usize) {
+        unsafe {
+            self.map(
+                vpn,
+                ppn,
+                pages,
+                &[PageACL::Read, PageACL::Write, PageACL::User],
+            )
+        };
+    }
+    /**
      * Unset the map.
      *
      * Args:

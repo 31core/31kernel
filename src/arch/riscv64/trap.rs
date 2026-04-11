@@ -2,7 +2,7 @@ use super::cpu::Context;
 use crate::{
     arch::riscv64::{page::MODE_SV39, *},
     page::KERNEL_PT,
-    task::SCHEDULER,
+    task::{KERNEL_PID, SCHEDULER},
 };
 use core::arch::{asm, global_asm};
 
@@ -31,7 +31,6 @@ pub unsafe extern "C" fn mtrap_handler(ctx: &mut Context) -> &mut Context {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strap_handler(ctx: *mut Context) {
-    unsafe { super::disable_interrupts() };
     let mut scause: u64;
     unsafe { asm!("csrr {}, scause", out(reg) scause) };
 
@@ -55,10 +54,15 @@ pub unsafe extern "C" fn strap_handler(ctx: *mut Context) {
         let next_ctx = next_task.context.clone();
         unsafe { ctx.write(next_ctx) };
 
+        if next_task.pid != KERNEL_PID {
+            unsafe { asm!("csrc sstatus, {}", in(reg) 1 << 8) }; // set SPP to user mode
+        } else {
+            unsafe { asm!("csrs sstatus, {}", in(reg) 1 << 8) }; // set SPP to supervisor mode
+        }
+
         unsafe {
             next_task.page.switch_to();
             asm!("sfence.vma");
         }
     }
-    unsafe { super::enable_interrupts() };
 }
