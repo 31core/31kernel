@@ -1,12 +1,19 @@
 pub mod cpu;
 pub mod page;
+pub mod trap;
+
+use core::arch::asm;
 
 pub fn get_sys_time() -> u64 {
     let ticks: u64;
-    unsafe { core::arch::asm!("mrs {}, cntvct_el0" , out(reg) ticks) };
+    unsafe { asm!("mrs {}, CNTVCT_EL0" , out(reg) ticks) };
 
     let freq: u64;
-    unsafe { core::arch::asm!("mrs {}, cntfrq_el0" , out(reg) freq) };
+    unsafe { asm!("mrs {}, CNTFRQ_EL0" , out(reg) freq) };
 
     ticks * 1_000_000_000 / freq
+}
+
+pub unsafe fn enable_interrupts() {
+    unsafe { asm!("msr DAIFClr, #2") };
 }

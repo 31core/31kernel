@@ -72,6 +72,11 @@ impl Scheduler {
             context.epc = elf.e_entry as u64;
             context.x[2] = ((stack_start + 16) * PAGE_SIZE) as u64; // sp
         }
+        #[cfg(target_arch = "aarch64")]
+        {
+            context.elr_el1 = elf.e_entry as u64;
+            context.sp = ((stack_start + 16) * PAGE_SIZE) as u64;
+        }
 
         self.max_pid += 1;
         let pid = self.max_pid;

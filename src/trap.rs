@@ -4,6 +4,10 @@ pub unsafe fn enable_interrupts() {
     unsafe {
         crate::arch::riscv64::enable_interrupts()
     };
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        crate::arch::arm64::enable_interrupts()
+    };
 }
 
 #[inline(always)]
