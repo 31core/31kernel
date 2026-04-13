@@ -62,6 +62,14 @@ unsafe fn release_page_dir(ppn: u64) {
     };
 }
 
+pub(super) unsafe fn refresh_tlb() {
+    unsafe {
+        asm!("tlbi vmalle1is");
+        asm!("dsb ish");
+        asm!("isb");
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 #[repr(transparent)]
 pub struct TableDescriptor(u64);
@@ -129,6 +137,9 @@ impl PageManager {
     }
     fn root_ppn(&self) -> u64 {
         self.root.ptes as u64 >> 12
+    }
+    pub fn ttbrx_el1(&self) -> u64 {
+        self.root.ptes as u64
     }
     unsafe fn map_4k(&mut self, vpn: usize, ppn: usize, mode: u64) {
         let l3 = vpn >> 27;
@@ -204,8 +215,8 @@ impl PageManagement for PageManager {
     }
     unsafe fn switch_to(&self) {
         unsafe {
-            asm!("msr ttbr0_el1, {}", in(reg) self.root_ppn() << 12);
-            asm!("msr ttbr1_el1, {}", in(reg) self.root_ppn() << 12);
+            asm!("msr TTBR0_EL1, {}", in(reg) self.ttbrx_el1());
+            asm!("msr TTBR1_EL1, {}", in(reg) self.ttbrx_el1());
             asm!("dsb ish");
             asm!("isb");
             mmu_enable();
@@ -213,9 +224,7 @@ impl PageManagement for PageManager {
     }
     unsafe fn refresh(&self) {
         unsafe {
-            asm!("tlbi vmalle1is");
-            asm!("dsb ish");
-            asm!("isb");
+            refresh_tlb();
         }
     }
     unsafe fn destroy(&mut self) {

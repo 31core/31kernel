@@ -46,10 +46,14 @@ el1_irq_trap:
         SAVE %n
         .set n, n + 1
     .endr
+    mrs x9, ELR_EL1
+    str x9, [sp, 32 * 8]
 
     mov x0, sp
     bl el1_irq_trap_handler
 
+    ldr x9, [sp, 32 * 8]
+    msr ELR_EL1, x9
     .set n, 0
     .rept 31
         LOAD %n

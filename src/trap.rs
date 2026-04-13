@@ -16,6 +16,10 @@ pub unsafe fn disable_interrupts() {
     unsafe {
         crate::arch::riscv64::disable_interrupts()
     };
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        crate::arch::arm64::disable_interrupts()
+    };
 }
 
 pub unsafe fn trap_stack_init(trap_stack: usize) {

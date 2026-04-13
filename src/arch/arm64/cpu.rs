@@ -22,6 +22,14 @@ fn gic_enable_irq(irq: usize) {
     unsafe { (isenabler as *mut u32).write_volatile(1 << bit) };
 }
 
+pub(super) unsafe fn set_timer() {
+    let freq: u64;
+    unsafe {
+        asm!("mrs {}, CNTFRQ_EL0", out(reg) freq);
+        asm!("msr CNTV_TVAL_EL0, {}", in(reg) freq / 1000); // 1ms clock
+    }
+}
+
 unsafe extern "C" {
     #[link_name = "vector_table"]
     static VECTOR_TABLE: u8;
@@ -42,11 +50,8 @@ pub unsafe fn cpu_init() {
         asm!("msr VBAR_EL1, {}", "isb", in(reg) addr_of!(VECTOR_TABLE));
 
         /* enable timer */
-        let freq: u64;
-        asm!("mrs {}, CNTFRQ_EL0", out(reg) freq);
-        asm!("msr CNTV_TVAL_EL0, {}", in(reg) freq / 1000); // 1ms clock
+        set_timer();
         asm!("msr CNTV_CTL_EL0, {}", in(reg) 1_u64);
-
         gic_enable_irq(27);
         (GICD_BASE as *mut u32).write_volatile(1);
         ((GICC_BASE + GICC_CTLR) as *mut u32).write_volatile(1);
@@ -54,7 +59,7 @@ pub unsafe fn cpu_init() {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 #[repr(C)]
 pub struct Context {
     pub x: [u64; 31],

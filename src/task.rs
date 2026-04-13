@@ -153,6 +153,10 @@ pub unsafe fn task_init() {
     unsafe {
         crate::page::KERNEL_PT = MaybeUninit::new(kernel_page.root_ppn() as usize);
     }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        crate::page::KERNEL_PT = MaybeUninit::new(kernel_page.ttbrx_el1() as usize);
+    }
 
     let kernel_task = Task {
         page: kernel_page,

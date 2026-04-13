@@ -14,6 +14,12 @@ pub fn get_sys_time() -> u64 {
     ticks * 1_000_000_000 / freq
 }
 
+#[inline(always)]
 pub unsafe fn enable_interrupts() {
     unsafe { asm!("msr DAIFClr, #2") };
+}
+
+#[inline(always)]
+pub unsafe fn disable_interrupts() {
+    unsafe { asm!("msr DAIFSet, #2") };
 }
