@@ -65,5 +65,5 @@ pub struct Context {
     pub x: [u64; 31],
     pub sp: u64,
     pub elr_el1: u64,
-    pub psate: u64,
+    pub pstate: u64,
 }

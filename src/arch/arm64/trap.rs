@@ -1,6 +1,6 @@
 use super::{
     cpu::{Context, set_timer},
-    page::refresh_tlb,
+    page::{refresh_tlb, set_tlbbrx},
 };
 use crate::{
     page::KERNEL_PT,
@@ -17,10 +17,7 @@ pub unsafe extern "C" fn el1_irq_trap_handler(ctx: *mut Context) {
     /* switch to kernel page table */
     let tbbrx_el1 = unsafe { (*(&raw mut KERNEL_PT)).assume_init() as u64 };
     unsafe {
-        asm!("msr TTBR0_EL1, {}", in(reg) tbbrx_el1);
-        asm!("msr TTBR1_EL1, {}", in(reg) tbbrx_el1);
-        asm!("dsb ish");
-        asm!("isb");
+        set_tlbbrx(tbbrx_el1);
         refresh_tlb();
     }
 
@@ -33,7 +30,7 @@ pub unsafe extern "C" fn el1_irq_trap_handler(ctx: *mut Context) {
     let next_task = scheduler.current_task();
     let next_ctx = next_task.context.clone();
     unsafe { ctx.write(next_ctx) };
-    if scheduler.current_task().pid != KERNEL_PID {
+    if next_task.pid != KERNEL_PID {
         unsafe { asm!("msr SP_EL0, {}", in(reg) (*ctx).sp) };
     }
 

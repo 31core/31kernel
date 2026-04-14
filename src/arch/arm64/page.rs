@@ -62,6 +62,15 @@ unsafe fn release_page_dir(ppn: u64) {
     };
 }
 
+pub(super) unsafe fn set_tlbbrx(tbbrx_el1: u64) {
+    unsafe {
+        asm!("msr TTBR0_EL1, {}", in(reg) tbbrx_el1);
+        asm!("msr TTBR1_EL1, {}", in(reg) tbbrx_el1);
+        asm!("dsb ish");
+        asm!("isb");
+    }
+}
+
 pub(super) unsafe fn refresh_tlb() {
     unsafe {
         asm!("tlbi vmalle1is");
@@ -192,10 +201,10 @@ impl PageManagement for PageManager {
             mode_u64 |= AP2_RO;
         }
         if !mode.contains(&PageACL::Execute) {
-            if mode.contains(&PageACL::User) {
-                mode_u64 |= UXN;
-            }
+            mode_u64 |= UXN;
             mode_u64 |= PXN;
+        } else if !mode.contains(&PageACL::User) {
+            mode_u64 |= UXN;
         }
         mode_u64 |= AF;
 
@@ -215,10 +224,7 @@ impl PageManagement for PageManager {
     }
     unsafe fn switch_to(&self) {
         unsafe {
-            asm!("msr TTBR0_EL1, {}", in(reg) self.ttbrx_el1());
-            asm!("msr TTBR1_EL1, {}", in(reg) self.ttbrx_el1());
-            asm!("dsb ish");
-            asm!("isb");
+            set_tlbbrx(self.ttbrx_el1());
             mmu_enable();
         }
     }
