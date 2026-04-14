@@ -1,5 +1,6 @@
 pub mod cpu;
 pub mod page;
+mod syscall;
 mod trap;
 
 pub use cpu::asm_wrap::*;
@@ -31,8 +32,6 @@ pub unsafe fn enable_timer() {
         asm!("csrr {}, mcounteren", out(reg) mcounteren);
         mcounteren |= 2;
         asm!("csrw mcounteren, {}", in(reg) mcounteren);
-
-        asm!("csrw mideleg, {}", in(reg) 0xffff);
     }
 }
 

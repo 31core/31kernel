@@ -1,7 +1,8 @@
-use crate::{PAGE_SIZE, alloc_pages, page::PageManagement};
+use crate::{PAGE_SIZE, alloc_pages, free_pages, page::PageManagement};
 use alloc::{
     boxed::Box,
     collections::{BTreeMap, BTreeSet},
+    vec::Vec,
 };
 use core::mem::MaybeUninit;
 use elf::{Elf, ElfError, PFlags, PType};
@@ -39,6 +40,7 @@ impl Scheduler {
             page.map_data(self.trap_stack, self.trap_stack, 16);
             page.map_data_u(stack_start, stack_start, 16);
         }
+        let mut page_allocs = Vec::new();
 
         for prog in &elf.p_headers {
             if let PType::Load = prog.p_type {
@@ -46,6 +48,7 @@ impl Scheduler {
                 let v_pages = prog.p_memsz.div_ceil(PAGE_SIZE);
 
                 let p_page = unsafe { alloc_pages!(v_pages) };
+                page_allocs.push((p_page, v_pages));
                 if prog.p_flags.contains(&PFlags::Exec) {
                     unsafe { page.map_text_u(v_page, p_page, v_pages) };
                 } else if prog.p_flags.contains(&PFlags::Write) {
@@ -87,6 +90,7 @@ impl Scheduler {
             page,
             nice: self.current_task().nice,
             context,
+            page_allocs,
         };
         self.tasks.insert(pid, task);
         self.vruntime.insert((0, pid));
@@ -106,6 +110,10 @@ impl Scheduler {
         self.vruntime.insert((vruntime, pid));
         self.current_pid = pid;
     }
+    pub fn kill(&mut self, pid: usize) {
+        self.tasks.remove(&pid);
+        self.vruntime.retain(|(_, this_pid)| *this_pid != pid);
+    }
 }
 
 pub const KERNEL_PID: usize = 0;
@@ -114,12 +122,14 @@ const NICE_MAX: isize = 19;
 const NICE_MIN: isize = -20;
 
 pub struct Task {
-    pub uid: u16,
+    pub uid: usize,
     pub pid: usize,
     pub ppid: usize,
     pub page: Box<dyn PageManagement>,
     pub nice: isize,
     pub context: Context,
+    /** Track pages allocations */
+    page_allocs: Vec<(usize, usize)>,
 }
 
 unsafe impl Sync for Task {}
@@ -135,6 +145,9 @@ impl Task {
 impl Drop for Task {
     fn drop(&mut self) {
         unsafe { self.page.destroy() };
+        for (page_num, page_count) in &self.page_allocs {
+            unsafe { free_pages!(*page_num, *page_count) };
+        }
     }
 }
 
@@ -165,6 +178,7 @@ pub unsafe fn task_init() {
         ppid: 0,
         nice: NICE_DEFAULT,
         context: Context::default(),
+        page_allocs: Vec::default(),
     };
 
     let mut tasks = BTreeMap::new();
@@ -193,6 +207,7 @@ pub unsafe fn kernel_fork() {
             ppid: current_task.pid,
             nice: current_task.nice,
             context: Context::default(),
+            page_allocs: Vec::default(),
         };
         scheduler.tasks.insert(new_task.pid, new_task);
         scheduler.max_pid += 1;

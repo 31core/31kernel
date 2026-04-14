@@ -1,6 +1,8 @@
+use asm_wrap::*;
 use core::arch::asm;
 
-use asm_wrap::*;
+const MEDELEG_ILLEGAL_INS: u64 = 1 << 2;
+const MEDELEG_ECALL_U: u64 = 1 << 8;
 
 /**
  * Wrapping for RISC-V 64 assembly instructions
@@ -85,6 +87,14 @@ pub mod asm_wrap {
 
 unsafe extern "C" {
     fn trap_switch_to_s_level();
+}
+
+pub unsafe fn cpu_init() {
+    unsafe {
+        asm!("csrw mideleg, {}", in(reg) 0xffff);
+        let medeleg = MEDELEG_ILLEGAL_INS | MEDELEG_ECALL_U;
+        asm!("csrw medeleg, {}", in(reg) medeleg);
+    }
 }
 
 pub unsafe fn switch_to_s_level() {
