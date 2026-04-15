@@ -1,4 +1,7 @@
-use crate::{PAGE_SIZE, alloc_pages, free_pages, page::PageManagement};
+use crate::{
+    alloc_pages, free_pages,
+    page::{PAGE_SIZE, PageManagement},
+};
 use alloc::{
     boxed::Box,
     collections::{BTreeMap, BTreeSet},
@@ -19,6 +22,8 @@ use crate::arch::riscv64::page::PageManager;
 
 pub static mut SCHEDULER: MaybeUninit<Scheduler> = MaybeUninit::uninit();
 
+const USER_STACK_PAGES: usize = 16;
+
 #[derive(Default)]
 pub struct Scheduler {
     pub tasks: BTreeMap<usize, Task>,
@@ -34,11 +39,11 @@ impl Scheduler {
         let elf = Elf::parse(elf_bytes)?;
 
         let mut page = unsafe { Box::new(PageManager::new()) };
-        let stack_start = unsafe { alloc_pages!(16) };
+        let stack = unsafe { alloc_pages!(USER_STACK_PAGES) };
         unsafe {
             page.map_kernel_region();
             page.map_data(self.trap_stack, self.trap_stack, 16);
-            page.map_data_u(stack_start, stack_start, 16);
+            page.map_data_u(stack, stack, USER_STACK_PAGES);
         }
         let mut page_allocs = Vec::new();
 
@@ -73,12 +78,12 @@ impl Scheduler {
         #[cfg(target_arch = "riscv64")]
         {
             context.epc = elf.e_entry as u64;
-            context.x[2] = ((stack_start + 16) * PAGE_SIZE) as u64; // sp
+            context.x[2] = ((stack + USER_STACK_PAGES) * PAGE_SIZE) as u64; // sp
         }
         #[cfg(target_arch = "aarch64")]
         {
             context.elr_el1 = elf.e_entry as u64;
-            context.sp = ((stack_start + 16) * PAGE_SIZE) as u64;
+            context.sp = ((stack + USER_STACK_PAGES) * PAGE_SIZE) as u64;
         }
 
         self.max_pid += 1;
@@ -91,6 +96,7 @@ impl Scheduler {
             nice: self.current_task().nice,
             context,
             page_allocs,
+            stack,
         };
         self.tasks.insert(pid, task);
         self.vruntime.insert((0, pid));
@@ -130,6 +136,8 @@ pub struct Task {
     pub context: Context,
     /** Track pages allocations */
     page_allocs: Vec<(usize, usize)>,
+    /** User stack bottom address */
+    stack: usize,
 }
 
 unsafe impl Sync for Task {}
@@ -144,7 +152,10 @@ impl Task {
 
 impl Drop for Task {
     fn drop(&mut self) {
-        unsafe { self.page.destroy() };
+        unsafe {
+            self.page.destroy();
+            free_pages!(self.stack, USER_STACK_PAGES);
+        }
         for (page_num, page_count) in &self.page_allocs {
             unsafe { free_pages!(*page_num, *page_count) };
         }
@@ -179,6 +190,7 @@ pub unsafe fn task_init() {
         nice: NICE_DEFAULT,
         context: Context::default(),
         page_allocs: Vec::default(),
+        stack: 0,
     };
 
     let mut tasks = BTreeMap::new();
@@ -208,6 +220,7 @@ pub unsafe fn kernel_fork() {
             nice: current_task.nice,
             context: Context::default(),
             page_allocs: Vec::default(),
+            stack: 0,
         };
         scheduler.tasks.insert(new_task.pid, new_task);
         scheduler.max_pid += 1;

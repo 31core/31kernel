@@ -3,10 +3,10 @@
  */
 
 use crate::{
-    PAGE_SIZE,
+    alloc_pages, free_pages,
+    page::PAGE_SIZE,
     page::{PageACL, PageManagement},
 };
-use alloc::alloc::{Layout, alloc_zeroed, dealloc};
 use core::arch::asm;
 
 const PTES_PER_DIR: usize = 512;
@@ -42,24 +42,14 @@ unsafe fn mmu_enable() {
  */
 unsafe fn alloc_page_dir() -> u64 {
     unsafe {
-        alloc_zeroed(
-            Layout::new::<[u8; PAGE_SIZE]>()
-                .align_to(PAGE_SIZE)
-                .unwrap(),
-        ) as u64
-            >> 12
+        let page_start = alloc_pages!(1);
+        ((PAGE_SIZE * page_start) as *mut u8).write_bytes(0, PAGE_SIZE);
+        page_start as u64
     }
 }
 /** Release a page directory. */
 unsafe fn release_page_dir(ppn: u64) {
-    unsafe {
-        dealloc(
-            (ppn << 12) as *mut u8,
-            Layout::new::<[u8; PAGE_SIZE]>()
-                .align_to(PAGE_SIZE)
-                .unwrap(),
-        )
-    };
+    unsafe { free_pages!(ppn as usize, 1) };
 }
 
 pub(super) unsafe fn set_tlbbrx(tbbrx_el1: u64) {

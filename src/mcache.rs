@@ -2,7 +2,7 @@
  * An mcache allocator for small objects allocation.
  */
 
-use crate::{PAGE_SIZE, alloc_pages, buddy_allocator::ceil_to_power_2, free_pages};
+use crate::{alloc_pages, buddy_allocator::ceil_to_power_2, free_pages, page::PAGE_SIZE};
 use alloc::alloc::{alloc, dealloc};
 use core::{
     alloc::{GlobalAlloc, Layout},

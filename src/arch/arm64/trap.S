@@ -3,8 +3,38 @@
     str x\n, [sp, \n * 8]
 .endm
 
+.macro SAVEALL
+    sub sp, sp, 33 * 8
+    .set n, 0
+    .rept 31
+        SAVE %n
+        .set n, n + 1
+    .endr
+    /* save ELR_EL1 */
+    mrs x9, ELR_EL1
+    str x9, [sp, 32 * 8]
+    /* save pstate */
+    mrs x9, SPSR_EL1
+    str x9, [sp, 33 * 8]
+.endm
+
 .macro LOAD n
     ldr x\n, [sp, \n * 8]
+.endm
+
+.macro LOADALL
+    /* restore ELR_EL1 */
+    ldr x9, [sp, 32 * 8]
+    msr ELR_EL1, x9
+    /* restore pstate */
+    ldr x9, [sp, 33 * 8]
+    msr SPSR_EL1, x9
+    .set n, 0
+    .rept 31
+        LOAD %n
+        .set n, n + 1
+    .endr
+    add sp, sp, 33 * 8
 .endm
 
 .extern el1_irq_trap_handler
@@ -41,7 +71,7 @@ vector_table:
 
     /* Synchronous EL0 */
     .align 7
-    b trap_unimplemented
+    b el1_sync_trap
     /* IRQ EL0 */
     .align 7
     b el1_irq_trap
@@ -52,35 +82,22 @@ vector_table:
     .align 7
     b trap_unimplemented
 
+el1_sync_trap:
+    SAVEALL
+
+    mov x0, sp
+    bl el1_sync_trap_handler
+
+    LOADALL
+    eret
+
 el1_irq_trap:
-    sub sp, sp, 33 * 8
-    .set n, 0
-    .rept 31
-        SAVE %n
-        .set n, n + 1
-    .endr
-    /* save ELR_EL1 */
-    mrs x9, ELR_EL1
-    str x9, [sp, 32 * 8]
-    /* save pstate */
-    mrs x9, SPSR_EL1
-    str x9, [sp, 33 * 8]
+    SAVEALL
 
     mov x0, sp
     bl el1_irq_trap_handler
 
-    /* restore ELR_EL1 */
-    ldr x9, [sp, 32 * 8]
-    msr ELR_EL1, x9
-    /* restore pstate */
-    ldr x9, [sp, 33 * 8]
-    msr SPSR_EL1, x9
-    .set n, 0
-    .rept 31
-        LOAD %n
-        .set n, n + 1
-    .endr
-    add sp, sp, 33 * 8
+    LOADALL
     eret
 
 trap_unimplemented:

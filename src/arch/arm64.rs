@@ -1,6 +1,7 @@
 pub mod cpu;
 pub mod page;
-pub mod trap;
+mod syscall;
+mod trap;
 
 use core::arch::asm;
 

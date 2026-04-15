@@ -25,7 +25,7 @@ pub unsafe fn disable_interrupts() {
 pub unsafe fn trap_stack_init(trap_stack: usize) {
     #[cfg(target_arch = "riscv64")]
     unsafe {
-        use crate::PAGE_SIZE;
+        use crate::page::PAGE_SIZE;
         use core::arch::asm;
 
         asm!("csrw sscratch, {}", in(reg) (trap_stack + 16) * PAGE_SIZE);

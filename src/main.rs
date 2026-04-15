@@ -47,7 +47,6 @@ unsafe extern "C" {
 
 const MEM_SIZE: usize = 128 * 1024 * 1024;
 const STACK_SIZE: usize = 64 * 4096;
-const PAGE_SIZE: usize = 4096;
 const PTR_BYTES: usize = size_of::<usize>();
 
 /**
@@ -74,6 +73,7 @@ pub extern "C" fn kernel_main() -> ! {
     cpu_init();
 
     unsafe {
+        use page::PAGE_SIZE;
         buddy_allocator::init(
             addr_of!(HEAP_START) as usize / PAGE_SIZE,
             MEM_SIZE / PAGE_SIZE,

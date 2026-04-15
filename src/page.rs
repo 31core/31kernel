@@ -4,6 +4,8 @@ use core::{mem::MaybeUninit, ptr::addr_of};
 
 pub static mut KERNEL_PT: MaybeUninit<usize> = MaybeUninit::uninit();
 
+pub const PAGE_SIZE: usize = 4096;
+
 #[derive(PartialEq)]
 pub enum PageACL {
     Read,
