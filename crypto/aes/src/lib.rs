@@ -244,12 +244,8 @@ pub struct Aes128 {
 }
 
 impl BlockCipher for Aes128 {
-    fn key_size() -> usize {
-        AES128_KEY_SIZE
-    }
-    fn block_size() -> usize {
-        AES_BLOCK_SIZE
-    }
+    const BLOKC_SIZE: usize = AES_BLOCK_SIZE;
+    const KEY_SIZE: usize = AES128_KEY_SIZE;
     fn set_key(&mut self, key: &[u8]) {
         for (i, byte) in key.iter().enumerate().take(AES_BLOCK_SIZE) {
             let col = i / 4;

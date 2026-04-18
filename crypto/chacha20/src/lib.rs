@@ -82,26 +82,16 @@ impl ChaCha20 {
 }
 
 impl StreamCipher for ChaCha20 {
-    fn key_size() -> usize
-    where
-        Self: Sized,
-    {
-        32
-    }
-    fn nonce_size() -> usize
-    where
-        Self: Sized,
-    {
-        12
-    }
+    const KEY_SIZE: usize = 32;
+    const NONCE_SIZE: usize = 12;
     fn set_key(&mut self, key: &[u8]) {
-        assert_eq!(key.len(), Self::key_size());
+        assert_eq!(key.len(), Self::KEY_SIZE);
         for (i, dword) in self.key.iter_mut().enumerate() {
             *dword = u32::from_le_bytes(key[4 * i..4 * (i + 1)].try_into().unwrap());
         }
     }
     fn set_nonce(&mut self, nonce: &[u8]) {
-        assert_eq!(nonce.len(), Self::nonce_size());
+        assert_eq!(nonce.len(), Self::NONCE_SIZE);
         for (i, dword) in self.nonce.iter_mut().enumerate() {
             *dword = u32::from_le_bytes(nonce[4 * i..4 * (i + 1)].try_into().unwrap());
         }

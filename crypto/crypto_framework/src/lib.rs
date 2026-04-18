@@ -2,13 +2,9 @@
 
 pub trait BlockCipher {
     /** block size in bytes */
-    fn block_size() -> usize
-    where
-        Self: Sized;
+    const BLOKC_SIZE: usize;
     /** key size in bytes */
-    fn key_size() -> usize
-    where
-        Self: Sized;
+    const KEY_SIZE: usize;
     fn set_key(&mut self, key: &[u8]);
     fn block_encrypt(&self, block: &mut [u8]);
     fn block_decrypt(&self, block: &mut [u8]);
@@ -16,13 +12,9 @@ pub trait BlockCipher {
 
 pub trait StreamCipher {
     /** key size in bytes */
-    fn key_size() -> usize
-    where
-        Self: Sized;
+    const KEY_SIZE: usize;
     /** nonce size in bytes */
-    fn nonce_size() -> usize
-    where
-        Self: Sized;
+    const NONCE_SIZE: usize;
     fn set_key(&mut self, key: &[u8]);
     fn set_nonce(&mut self, key: &[u8]);
     fn encrypt(&mut self, block: &mut [u8]);
@@ -32,18 +24,17 @@ pub trait StreamCipher {
 }
 
 pub trait CryptoRandgen {
-    fn seed_size() -> usize;
+    /** seed size in bytes */
+    const SEED_SIZE: usize;
     fn reseed(&mut self, seed: &[u8]);
     fn gen_bytes(&mut self, buf: &mut [u8]);
 }
 
 impl<T: StreamCipher> CryptoRandgen for T {
-    fn seed_size() -> usize {
-        Self::key_size() + Self::nonce_size()
-    }
+    const SEED_SIZE: usize = T::KEY_SIZE + T::NONCE_SIZE;
     fn reseed(&mut self, seed: &[u8]) {
-        self.set_key(&seed[..Self::key_size()]);
-        self.set_nonce(&seed[Self::key_size()..]);
+        self.set_key(&seed[..T::KEY_SIZE]);
+        self.set_nonce(&seed[T::KEY_SIZE..]);
     }
     fn gen_bytes(&mut self, buf: &mut [u8]) {
         self.encrypt(buf);
@@ -52,9 +43,7 @@ impl<T: StreamCipher> CryptoRandgen for T {
 
 pub trait Hash {
     /** digest length in bytes */
-    fn digest_length() -> usize
-    where
-        Self: Sized;
+    const DIGEST_LEN: usize;
     fn update(&mut self, message: &[u8]);
     fn digest(&mut self, sum: &mut [u8]);
 }
@@ -105,7 +94,7 @@ where
         self.ihasher.update(message);
     }
     pub fn digest(&mut self, sum: &mut [u8]) {
-        assert_eq!(sum.len(), H::digest_length());
+        assert_eq!(sum.len(), H::DIGEST_LEN);
 
         self.ihasher.digest(sum);
         self.ohasher.update(sum);

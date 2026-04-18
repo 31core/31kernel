@@ -70,9 +70,7 @@ impl Default for Sha256 {
 }
 
 impl Hash for Sha256 {
-    fn digest_length() -> usize {
-        SHA256_DIGEST_LEN
-    }
+    const DIGEST_LEN: usize = SHA256_DIGEST_LEN;
     fn update(&mut self, mut message: &[u8]) {
         self.message_len += 8 * message.len() as u64;
 
