@@ -1,3 +1,4 @@
+use super::gic::*;
 use core::{arch::asm, ptr::addr_of};
 
 const TCR_T0SZ: u64 = 16;
@@ -9,20 +10,7 @@ const TCR_TG1_4KB: u64 = 2 << 30;
 const TCR_IRGN1: u64 = 0x01 << 24;
 const TCR_ORGN1: u64 = 0x01 << 26;
 
-const GICD_BASE: u32 = 0x08000000;
-const GICC_BASE: u32 = 0x08010000;
-const GICC_CTLR: u32 = 0x00;
-const GICC_PMR: u32 = 0x04;
-
-fn gic_enable_irq(irq: usize) {
-    let reg = irq / 32;
-    let bit = irq % 32;
-
-    let isenabler = GICD_BASE + 0x100 + reg as u32 * 4;
-    unsafe { (isenabler as *mut u32).write_volatile(1 << bit) };
-}
-
-pub(super) unsafe fn set_timer() {
+pub(super) fn set_timer() {
     let freq: u64;
     unsafe {
         asm!("mrs {}, CNTFRQ_EL0", out(reg) freq);
@@ -53,9 +41,9 @@ pub unsafe fn cpu_init() {
         set_timer();
         asm!("msr CNTV_CTL_EL0, {}", in(reg) 1_u64);
         gic_enable_irq(27);
-        (GICD_BASE as *mut u32).write_volatile(1);
-        ((GICC_BASE + GICC_CTLR) as *mut u32).write_volatile(1);
-        ((GICC_BASE + GICC_PMR) as *mut u32).write_volatile(0xff);
+        gicd_mmio_write(GICD_CTLR, 1);
+        gicc_mmio_write(GICC_CTLR, 1);
+        gicc_mmio_write(GICC_PMR, 0xff);
     }
 }
 

@@ -1,4 +1,5 @@
 pub mod cpu;
+mod gic;
 pub mod page;
 mod syscall;
 mod trap;

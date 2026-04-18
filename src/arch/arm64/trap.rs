@@ -3,6 +3,7 @@ use super::{
     page::{refresh_tlb, set_tlbbrx},
 };
 use crate::{
+    arch::arm64::gic::*,
     page::KERNEL_PT,
     task::{KERNEL_PID, SCHEDULER},
 };
@@ -46,11 +47,17 @@ pub unsafe extern "C" fn el1_sync_trap_handler(ctx: *mut Context) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn el1_irq_trap_handler(ctx: *mut Context) {
-    unsafe {
-        set_timer();
-        to_kernel_pt();
-    };
+    unsafe { to_kernel_pt() };
 
+    let irq = unsafe { gicc_mmio_read(GICC_IAR) };
+    if irq == INTID_VTIMER {
+        set_timer();
+        task_switch(ctx);
+        unsafe { gicc_mmio_write(GICC_EOIR, irq) };
+    }
+}
+
+fn task_switch(ctx: *mut Context) {
     let scheduler = unsafe { (*(&raw mut SCHEDULER)).assume_init_mut() };
     if scheduler.current_task().pid != KERNEL_PID {
         unsafe { asm!("mrs {}, SP_EL0", out(reg)(*ctx).sp) };

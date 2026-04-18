@@ -4,7 +4,7 @@
 .endm
 
 .macro SAVEALL
-    sub sp, sp, 33 * 8
+    sub sp, sp, 34 * 8
     .set n, 0
     .rept 31
         SAVE %n
@@ -34,7 +34,7 @@
         LOAD %n
         .set n, n + 1
     .endr
-    add sp, sp, 33 * 8
+    add sp, sp, 34 * 8
 .endm
 
 .extern el1_irq_trap_handler
