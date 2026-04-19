@@ -12,4 +12,5 @@ chacha20 = { path = "crypto/chacha20" }
 crypto_framework = { path = "crypto/crypto_framework" }
 sha2 = { path = "crypto/sha2" }
 
+dtb = { path = "lib/dtb" }
 elf = { path = "lib/elf" }

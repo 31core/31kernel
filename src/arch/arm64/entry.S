@@ -1,8 +1,8 @@
     .section .text.entry
     .globl _start
 _start:
-    ldr x0, =boot_stack_top
-    mov sp, x0
+    ldr x9, =boot_stack_top
+    mov sp, x9
     b kernel_main
 
     .section .bss.stack

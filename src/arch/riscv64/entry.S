@@ -7,6 +7,7 @@ _start:
 
     la t0, strap
     csrw stvec, t0
+    mv a0, a1
     j kernel_main
 
     .section .bss.stack

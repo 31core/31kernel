@@ -68,7 +68,7 @@ fn cpu_init() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kernel_main() -> ! {
+pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     clear_bss();
     cpu_init();
 
