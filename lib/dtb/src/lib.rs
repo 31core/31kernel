@@ -3,6 +3,8 @@
 
 extern crate alloc;
 
+pub mod utils;
+
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::result::Result;
 
@@ -67,12 +69,7 @@ impl Node {
             let nameoff = u32!(bytes, 8) as usize;
             bytes = &bytes[12..];
 
-            let name;
-            if nameoff > 0 {
-                (_, name) = parse_null_string(&strings_buf[nameoff..]);
-            } else {
-                name = String::default();
-            }
+            let (_, name) = parse_null_string(&strings_buf[nameoff..]);
             let value = bytes[..len].to_vec();
             let padding = (4 - len % 4) % 4;
             progs.push(Property { name, value });

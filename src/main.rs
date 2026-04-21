@@ -20,6 +20,7 @@ mod trap;
 mod vfs;
 
 use core::{arch::asm, ptr::addr_of};
+use dtb::{DeviceTree, Node, utils::*};
 
 extern crate alloc;
 
@@ -67,17 +68,57 @@ fn cpu_init() {
     }
 }
 
+/** Setup console (serial0) for kmsg output. */
+fn setup_console(dtb: &DeviceTree) {
+    fn setup_by_serial0_node(serial0_node: &Node) {
+        use device::{
+            CharDev,
+            uart::{ns16550::NS16550, pl011::PL011},
+        };
+        let kmsg = unsafe { (*(&raw mut kmsg::KMSG)).assume_init_mut() };
+        for prog in &serial0_node.progs {
+            if prog.name == "compatible" && check_compatible(&prog.value, "arm,pl011") {
+                kmsg.output_handler = Some(PL011::print_str);
+            }
+            if prog.name == "compatible" && check_compatible(&prog.value, "ns16550a") {
+                kmsg.output_handler = Some(NS16550::print_str);
+            }
+        }
+    }
+    for node in &dtb.root.child_nodes {
+        if node_name(&node.name) == "serial0" {
+            setup_by_serial0_node(node);
+            return;
+        } else if node.name == "aliases" {
+            for prog in &node.progs {
+                /* alias for serial0 */
+                if prog.name == "serial0" {
+                    let node = node_by_alias(&dtb.root, &prog.value).unwrap();
+                    setup_by_serial0_node(node);
+                    return;
+                }
+            }
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     clear_bss();
     cpu_init();
 
+    let dtb;
     unsafe {
         use page::PAGE_SIZE;
         buddy_allocator::init(
             addr_of!(HEAP_START) as usize / PAGE_SIZE,
             MEM_SIZE / PAGE_SIZE,
         );
+
+        let dtb_ptr = dtb_addr as *const u8;
+        let dtb_size = DeviceTree::detect_totalsize(dtb_ptr);
+        let dtb_bytes = core::slice::from_raw_parts(dtb_ptr, dtb_size);
+        dtb = DeviceTree::parse(dtb_bytes).unwrap();
 
         task::task_init();
         trap::enable_interrupts();
@@ -86,6 +127,7 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     rand::rand_init();
     vfs::vfs_init();
     kmsg::kmsg_init();
+    setup_console(&dtb);
 
     panic!();
 }
