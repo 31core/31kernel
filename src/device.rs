@@ -10,19 +10,19 @@ use alloc::{
 pub mod uart;
 
 pub trait CharDev {
-    fn can_read() -> bool;
-    fn can_write() -> bool;
-    fn put_char(c: u8);
-    fn get_char() -> u8;
-    fn print_str(s: &str) {
+    fn can_read(&self) -> bool;
+    fn can_write(&self) -> bool;
+    fn put_char(&self, c: u8);
+    fn get_char(&self) -> u8;
+    fn print_str(&self, s: &str) {
         for b in s.as_bytes() {
-            Self::put_char(*b);
+            self.put_char(*b);
         }
     }
-    fn input_str() -> String {
+    fn input_str(&self) -> String {
         let mut input = Vec::new();
         loop {
-            let c = Self::get_char();
+            let c = self.get_char();
             if c == b'\n' {
                 return String::from_utf8_lossy(&input).to_string();
             }

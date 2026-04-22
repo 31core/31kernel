@@ -5,7 +5,7 @@ extern crate alloc;
 
 pub mod utils;
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use core::result::Result;
 
 const MAGIC: [u8; 4] = [0xd0, 0x0d, 0xfe, 0xed];
@@ -39,7 +39,9 @@ pub enum ParseError {
 pub struct Node {
     pub name: String,
     pub progs: Vec<Property>,
-    pub child_nodes: Vec<Box<Node>>,
+    pub child_nodes: Vec<Node>,
+    pub size_cells: usize,
+    pub address_cells: usize,
 }
 
 impl Node {
@@ -51,13 +53,17 @@ impl Node {
 
         let mut progs = Vec::new();
         let mut child_nodes = Vec::new();
+        let mut size_cells = 1;
+        let mut address_cells = 2;
         while u32!(bytes, 0) != FDT_END_NODE {
             if u32!(bytes, 0) == FDT_BEGIN_NODE {
-                let child_node;
+                let mut child_node;
                 (bytes, child_node) = Self::parse(bytes, strings_buf);
                 debug_assert_eq!(u32!(bytes, 0), FDT_END_NODE);
                 bytes = &bytes[4..]; // skip FDT_END_NODE
-                child_nodes.push(Box::new(child_node));
+                child_node.size_cells = size_cells;
+                child_node.address_cells = address_cells;
+                child_nodes.push(child_node);
                 continue;
             } else if u32!(bytes, 0) == FDT_NOP {
                 bytes = &bytes[4..]; // skip FDT_NOP
@@ -72,8 +78,21 @@ impl Node {
             let (_, name) = parse_null_string(&strings_buf[nameoff..]);
             let value = bytes[..len].to_vec();
             let padding = (4 - len % 4) % 4;
-            progs.push(Property { name, value });
             bytes = &bytes[len + padding..];
+
+            if name == "#size-cells" {
+                size_cells = u32!(value, 0) as usize;
+                for node in &mut child_nodes {
+                    node.size_cells = size_cells;
+                }
+            } else if name == "#address-cells" {
+                address_cells = u32!(value, 0) as usize;
+                for node in &mut child_nodes {
+                    node.address_cells = address_cells;
+                }
+            } else {
+                progs.push(Property { name, value });
+            }
         }
 
         (
@@ -82,8 +101,18 @@ impl Node {
                 name,
                 progs,
                 child_nodes,
+                size_cells,
+                address_cells,
             },
         )
+    }
+    pub fn get_property(&self, name: &str) -> Option<&[u8]> {
+        for prog in &self.progs {
+            if prog.name == name {
+                return Some(&prog.value);
+            }
+        }
+        None
     }
 }
 

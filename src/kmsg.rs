@@ -2,7 +2,9 @@
  * Kernel debug message.
  */
 
+use crate::device::CharDev;
 use alloc::{
+    boxed::Box,
     string::{String, ToString},
     vec::Vec,
 };
@@ -103,7 +105,7 @@ impl Display for KernelMessageEntry {
 pub struct KernelMessage {
     pub msgs: Vec<KernelMessageEntry>,
     /** If `output_handler` is set, message will outputs when calling `add_message`. */
-    pub output_handler: Option<fn(&str)>,
+    pub output_handler: Option<Box<dyn CharDev>>,
 }
 
 impl KernelMessage {
@@ -138,8 +140,8 @@ impl KernelMessage {
         let time = crate::time::get_sys_time();
         self.msgs.push(KernelMessageEntry::new(time, level, msg));
 
-        if let Some(output_fn) = self.output_handler {
-            output_fn(&self.msgs.last().unwrap().to_string());
+        if let Some(output_fn) = &self.output_handler {
+            output_fn.print_str(&self.msgs.last().unwrap().to_string());
         }
     }
 }

@@ -19,6 +19,7 @@ mod time;
 mod trap;
 mod vfs;
 
+use alloc::boxed::Box;
 use core::{arch::asm, ptr::addr_of};
 use dtb::{DeviceTree, Node, utils::*};
 
@@ -46,6 +47,15 @@ unsafe extern "C" {
     static HEAP_START: u8;
 }
 
+macro_rules! static_mut {
+    ($var:expr) => {
+        #[allow(unused_unsafe)]
+        unsafe {
+            (*(&raw mut $var)).assume_init_mut()
+        }
+    };
+}
+
 const MEM_SIZE: usize = 128 * 1024 * 1024;
 const STACK_SIZE: usize = 64 * 4096;
 const PTR_BYTES: usize = size_of::<usize>();
@@ -71,17 +81,41 @@ fn cpu_init() {
 /** Setup console (serial0) for kmsg output. */
 fn setup_console(dtb: &DeviceTree) {
     fn setup_by_serial0_node(serial0_node: &Node) {
-        use device::{
-            CharDev,
-            uart::{ns16550::NS16550, pl011::PL011},
-        };
+        use device::uart::{ns16550::NS16550, pl011::PL011};
         let kmsg = unsafe { (*(&raw mut kmsg::KMSG)).assume_init_mut() };
-        for prog in &serial0_node.progs {
-            if prog.name == "compatible" && check_compatible(&prog.value, "arm,pl011") {
-                kmsg.output_handler = Some(PL011::print_str);
-            }
-            if prog.name == "compatible" && check_compatible(&prog.value, "ns16550a") {
-                kmsg.output_handler = Some(NS16550::print_str);
+        if let Some(compatible) = serial0_node.get_property("compatible")
+            && check_compatible(compatible, "arm,pl011")
+            && let Some(reg) = serial0_node.get_property("reg")
+        {
+            let reg_addr = if serial0_node.address_cells == 2 {
+                u64::from_be_bytes(reg[..8].try_into().unwrap())
+            } else {
+                u32::from_be_bytes(reg[..4].try_into().unwrap()) as u64
+            };
+            kmsg.output_handler = Some(Box::new(PL011(reg_addr)));
+        }
+        if let Some(compatible) = serial0_node.get_property("compatible")
+            && check_compatible(compatible, "ns16550a")
+            && let Some(reg) = serial0_node.get_property("reg")
+        {
+            let reg_addr = if serial0_node.address_cells == 2 {
+                u64::from_be_bytes(reg[..8].try_into().unwrap())
+            } else {
+                u32::from_be_bytes(reg[..4].try_into().unwrap()) as u64
+            };
+            kmsg.output_handler = Some(Box::new(NS16550(reg_addr)));
+        }
+        /* map registers */
+        if let Some(reg) = serial0_node.get_property("reg") {
+            let reg_addr = if serial0_node.address_cells == 2 {
+                u64::from_be_bytes(reg[..8].try_into().unwrap()) as usize
+            } else {
+                u32::from_be_bytes(reg[..4].try_into().unwrap()) as usize
+            };
+
+            let kernel_pt = &mut static_mut!(task::SCHEDULER).current_task_mut().page;
+            unsafe {
+                kernel_pt.map_data(reg_addr / page::PAGE_SIZE, reg_addr / page::PAGE_SIZE, 1);
             }
         }
     }
@@ -89,15 +123,12 @@ fn setup_console(dtb: &DeviceTree) {
         if node_name(&node.name) == "serial0" {
             setup_by_serial0_node(node);
             return;
-        } else if node.name == "aliases" {
-            for prog in &node.progs {
-                /* alias for serial0 */
-                if prog.name == "serial0" {
-                    let node = node_by_alias(&dtb.root, &prog.value).unwrap();
-                    setup_by_serial0_node(node);
-                    return;
-                }
-            }
+        } else if node.name == "aliases"
+            && let Some(serial0) = node.get_property("serial0")
+        {
+            let node = node_by_alias(&dtb.root, serial0).unwrap();
+            setup_by_serial0_node(node);
+            return;
         }
     }
 }
