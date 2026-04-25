@@ -137,6 +137,13 @@ impl PageManager {
     fn root_ppn(&self) -> u64 {
         self.root.ptes as u64 >> 12
     }
+    pub fn from_ttbrx_el1(ttbrx_el1: u64) -> Self {
+        Self {
+            root: PageTable {
+                ptes: ttbrx_el1 as *mut TableDescriptor,
+            },
+        }
+    }
     pub fn ttbrx_el1(&self) -> u64 {
         self.root.ptes as u64
     }

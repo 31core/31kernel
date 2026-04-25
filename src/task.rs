@@ -1,6 +1,6 @@
 use crate::{
     alloc_pages, free_pages,
-    page::{PAGE_SIZE, PageManagement},
+    page::{KERNEL_PT, PAGE_SIZE, PageManagement},
 };
 use alloc::{
     boxed::Box,
@@ -167,21 +167,12 @@ pub unsafe fn task_init() {
     unsafe {
         crate::trap::trap_stack_init(trap_stack);
     }
-    let mut kernel_page = unsafe { Box::new(PageManager::new()) };
-    unsafe {
-        kernel_page.map_kernel_region();
-        kernel_page.switch_to();
-        kernel_page.refresh();
-    }
-    #[cfg(target_arch = "riscv64")]
-    unsafe {
-        crate::page::KERNEL_PT = MaybeUninit::new(kernel_page.root_ppn() as usize);
-    }
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        crate::page::KERNEL_PT = MaybeUninit::new(kernel_page.ttbrx_el1() as usize);
-    }
 
+    #[cfg(target_arch = "riscv64")]
+    let kernel_page = unsafe { Box::new(PageManager::from_ppn(KERNEL_PT.assume_init() as u64)) };
+    #[cfg(target_arch = "aarch64")]
+    let kernel_page =
+        unsafe { Box::new(PageManager::from_ttbrx_el1(KERNEL_PT.assume_init() as u64)) };
     let kernel_task = Task {
         page: kernel_page,
         uid: 0,

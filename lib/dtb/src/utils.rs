@@ -53,3 +53,25 @@ pub fn check_compatible(mut value: &[u8], compatible: &str) -> bool {
     }
     false
 }
+
+/**
+ * Returns [Vec]<(`reg_address`, `reg_size`)>
+ */
+pub fn parse_reg(mut reg: &[u8], address_cells: usize, size_cells: usize) -> Vec<(u64, u64)> {
+    let mut regs = Vec::new();
+    for _ in 0..reg.len() / (4 * size_cells + 4 * address_cells) {
+        let reg_addr = if address_cells == 2 {
+            u64::from_be_bytes(reg[..8].try_into().unwrap())
+        } else {
+            u32::from_be_bytes(reg[..4].try_into().unwrap()) as u64
+        };
+        let reg_size = if size_cells == 2 {
+            u64::from_be_bytes(reg[8..16].try_into().unwrap())
+        } else {
+            u32::from_be_bytes(reg[4..8].try_into().unwrap()) as u64
+        };
+        regs.push((reg_addr, reg_size));
+        reg = &reg[4 * size_cells + 4 * address_cells..];
+    }
+    regs
+}

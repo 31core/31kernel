@@ -143,6 +143,11 @@ impl PageManager {
             root: PageTable::from_ppn(root_pt),
         }
     }
+    pub fn from_ppn(root_pt: u64) -> Self {
+        Self {
+            root: PageTable::from_ppn(root_pt),
+        }
+    }
     pub fn root_ppn(&self) -> u64 {
         self.root.ptes as u64 >> 12
     }

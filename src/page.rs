@@ -136,3 +136,26 @@ pub trait PageManagement {
         }
     }
 }
+
+pub fn kernel_pt_init() {
+    #[cfg(target_arch = "aarch64")]
+    use crate::arch::arm64::page::PageManager;
+    #[cfg(target_arch = "riscv64")]
+    use crate::arch::riscv64::page::PageManager;
+
+    let mut kernel_page = unsafe { PageManager::new() };
+    unsafe {
+        kernel_page.map_kernel_region();
+        kernel_page.switch_to();
+        kernel_page.refresh();
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    unsafe {
+        KERNEL_PT = MaybeUninit::new(kernel_page.root_ppn() as usize);
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        KERNEL_PT = MaybeUninit::new(kernel_page.ttbrx_el1() as usize);
+    }
+}
