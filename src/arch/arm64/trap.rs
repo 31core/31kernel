@@ -1,6 +1,6 @@
 use super::{
     cpu::{Context, set_timer},
-    page::{refresh_tlb, set_tlbbrx},
+    page::{refresh_tlb, set_ttbrx},
 };
 use crate::{
     arch::arm64::gic::*,
@@ -15,7 +15,7 @@ global_asm!(include_str!("trap.S"));
 unsafe fn to_kernel_pt() {
     let tbbrx_el1 = unsafe { (*(&raw mut KERNEL_PT)).assume_init() as u64 };
     unsafe {
-        set_tlbbrx(tbbrx_el1);
+        set_ttbrx(tbbrx_el1);
         refresh_tlb();
     }
 }
@@ -45,6 +45,19 @@ pub unsafe extern "C" fn el1_sync_trap_handler(ctx: *mut Context) {
     };
 }
 
+/**
+ * Switch to kernel page table and execute the given function, and then restore the previous page table.
+ */
+fn kernel_pt_do(func: impl Fn()) {
+    let ttbrx_el1;
+    unsafe {
+        asm!("mrs {}, TTBR0_EL1", out(reg) ttbrx_el1);
+        to_kernel_pt();
+        func();
+        set_ttbrx(ttbrx_el1);
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn el1_irq_trap_handler(ctx: *mut Context) {
     unsafe { to_kernel_pt() };
@@ -53,7 +66,9 @@ pub unsafe extern "C" fn el1_irq_trap_handler(ctx: *mut Context) {
     if irq == INTID_VTIMER {
         set_timer();
         task_switch(ctx);
-        unsafe { gicc_mmio_write(GICC_EOIR, irq) };
+        kernel_pt_do(|| unsafe {
+            gicc_mmio_write(GICC_EOIR, irq);
+        });
     }
 }
 

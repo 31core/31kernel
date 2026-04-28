@@ -1,4 +1,3 @@
-use super::gic::*;
 use core::{arch::asm, ptr::addr_of};
 
 const TCR_T0SZ: u64 = 16;
@@ -40,10 +39,6 @@ pub unsafe fn cpu_init() {
         /* enable timer */
         set_timer();
         asm!("msr CNTV_CTL_EL0, {}", in(reg) 1_u64);
-        gic_enable_irq(27);
-        gicd_mmio_write(GICD_CTLR, 1);
-        gicc_mmio_write(GICC_CTLR, 1);
-        gicc_mmio_write(GICC_PMR, 0xff);
     }
 }
 

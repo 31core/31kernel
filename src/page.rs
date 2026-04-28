@@ -146,6 +146,11 @@ pub fn kernel_pt_init() {
     let mut kernel_page = unsafe { PageManager::new() };
     unsafe {
         kernel_page.map_kernel_region();
+        kernel_page.map_data(
+            addr_of!(crate::HEAP_START) as usize / PAGE_SIZE,
+            addr_of!(crate::HEAP_START) as usize / PAGE_SIZE,
+            crate::MEM_SIZE / PAGE_SIZE,
+        );
         kernel_page.switch_to();
         kernel_page.refresh();
     }

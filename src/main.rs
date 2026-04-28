@@ -151,11 +151,13 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
         let dtb_ptr = dtb_addr as *const u8;
         let dtb_size = DeviceTree::detect_totalsize(dtb_ptr);
         let dtb_bytes = core::slice::from_raw_parts(dtb_ptr, dtb_size);
-        DeviceTree::parse(dtb_bytes).unwrap()
+        DeviceTree::parse(dtb_bytes)
     };
 
     page::kernel_pt_init();
-    soc_init(&dtb);
+    if let Ok(dtb) = &dtb {
+        soc_init(&dtb);
+    }
     unsafe {
         task::task_init();
         trap::enable_interrupts();
@@ -164,7 +166,9 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     rand::rand_init();
     vfs::vfs_init();
     kmsg::kmsg_init();
-    setup_console(&dtb);
+    if let Ok(dtb) = &dtb {
+        setup_console(&dtb);
+    }
 
     panic!();
 }

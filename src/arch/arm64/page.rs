@@ -52,7 +52,7 @@ unsafe fn release_page_dir(ppn: u64) {
     unsafe { free_pages!(ppn as usize, 1) };
 }
 
-pub(super) unsafe fn set_tlbbrx(tbbrx_el1: u64) {
+pub(super) unsafe fn set_ttbrx(tbbrx_el1: u64) {
     unsafe {
         asm!("msr TTBR0_EL1, {}", in(reg) tbbrx_el1);
         asm!("msr TTBR1_EL1, {}", in(reg) tbbrx_el1);
@@ -221,7 +221,7 @@ impl PageManagement for PageManager {
     }
     unsafe fn switch_to(&self) {
         unsafe {
-            set_tlbbrx(self.ttbrx_el1());
+            set_ttbrx(self.ttbrx_el1());
             mmu_enable();
         }
     }
