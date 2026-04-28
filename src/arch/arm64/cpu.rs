@@ -39,6 +39,9 @@ pub unsafe fn cpu_init() {
         /* enable timer */
         set_timer();
         asm!("msr CNTV_CTL_EL0, {}", in(reg) 1_u64);
+
+        /* enable FP/SIMD */
+        asm!("msr CPACR_EL1, {:x}", "isb", in(reg) 0b11 << 20)
     }
 }
 

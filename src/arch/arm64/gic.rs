@@ -41,9 +41,13 @@ pub const INTID_VTIMER: u32 = 27;
 
 use dtb::{Node, utils::*};
 
-pub fn init_gic_regs(node: &Node) {
+/**
+ * Initialize GIC registers from a `interrupt-controller` node.
+ */
+pub fn init_gic_regs(node: &Node) -> Result<(), &str> {
     if let Some(compatible) = node.get_property("compatible")
-        && check_compatible(compatible, "arm,cortex-a15-gic")
+        && (check_compatible(compatible, "arm,cortex-a15-gic")
+            || check_compatible(compatible, "arm,gic-400"))
         && let Some(reg) = node.get_property("reg")
     {
         use crate::page::{KERNEL_PT, PAGE_SIZE, PageManagement};
@@ -67,5 +71,8 @@ pub fn init_gic_regs(node: &Node) {
                 );
             }
         }
+        Ok(())
+    } else {
+        Err("No compatible GIC node found")
     }
 }

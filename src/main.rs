@@ -156,7 +156,7 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
 
     page::kernel_pt_init();
     if let Ok(dtb) = &dtb {
-        soc_init(&dtb);
+        soc_init(dtb);
     }
     unsafe {
         task::task_init();
@@ -167,7 +167,7 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     vfs::vfs_init();
     kmsg::kmsg_init();
     if let Ok(dtb) = &dtb {
-        setup_console(&dtb);
+        setup_console(dtb);
     }
 
     panic!();

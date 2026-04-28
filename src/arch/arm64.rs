@@ -32,14 +32,14 @@ pub fn soc_init(dtb: &DeviceTree) {
     /* map gic registers */
     'root: for node in &dtb.root.child_nodes {
         if node_name(&node.name) == "intc" || node_name(&node.name) == "interrupt-controller" {
-            init_gic_regs(node);
+            init_gic_regs(node).unwrap();
             break;
         } else if node_name(&node.name) == "soc" {
             for soc_node in &node.child_nodes {
                 if node_name(&soc_node.name) == "intc"
                     || node_name(&soc_node.name) == "interrupt-controller"
                 {
-                    init_gic_regs(soc_node);
+                    init_gic_regs(soc_node).unwrap();
                     break 'root;
                 }
             }
