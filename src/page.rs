@@ -49,7 +49,7 @@ pub trait PageAllocator {
     fn free_pages(&mut self, page_start: usize, pages_count: usize);
 }
 
-pub trait PageManagement {
+pub trait Paging {
     /**
      * Map virtual page into physical page.
      *
@@ -138,12 +138,9 @@ pub trait PageManagement {
 }
 
 pub fn kernel_pt_init() {
-    #[cfg(target_arch = "aarch64")]
-    use crate::arch::arm64::page::PageManager;
-    #[cfg(target_arch = "riscv64")]
-    use crate::arch::riscv64::page::PageManager;
+    use crate::arch::PageMapper;
 
-    let mut kernel_page = unsafe { PageManager::new() };
+    let mut kernel_page = unsafe { PageMapper::new() };
     unsafe {
         kernel_page.map_kernel_region();
         kernel_page.map_data(

@@ -85,12 +85,8 @@ pub unsafe extern "C" fn strap_handler(ctx: *mut Context) {
         unsafe { to_kernel_pt() };
 
         let scheduler = unsafe { (*(&raw mut SCHEDULER)).assume_init_mut() };
-        scheduler.current_task_mut().context = unsafe { ctx.read() };
-        scheduler.schedule();
-        let next_task = scheduler.current_task();
-        let next_ctx = next_task.context.clone();
-        unsafe { ctx.write(next_ctx) };
 
+        let next_task = scheduler.switch_task(ctx);
         if next_task.pid != KERNEL_PID {
             unsafe { asm!("csrc sstatus, {}", in(reg) 1 << 8) }; // set SPP to user mode
         } else {

@@ -15,3 +15,13 @@ global_asm!(include_str!("arch/riscv64/entry.S"));
 
 #[cfg(target_arch = "aarch64")]
 global_asm!(include_str!("arch/arm64/entry.S"));
+
+#[cfg(target_arch = "aarch64")]
+pub use arm64::cpu::Context;
+#[cfg(target_arch = "riscv64")]
+pub use riscv64::cpu::Context;
+
+#[cfg(target_arch = "aarch64")]
+pub use arm64::page::PageMapper;
+#[cfg(target_arch = "riscv64")]
+pub use riscv64::page::PageMapper;

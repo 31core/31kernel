@@ -1,6 +1,8 @@
 use crate::{
-    alloc_pages, free_pages,
-    page::{KERNEL_PT, PAGE_SIZE, PageManagement},
+    alloc_pages,
+    arch::{Context, PageMapper},
+    free_pages,
+    page::{KERNEL_PT, PAGE_SIZE, Paging},
 };
 use alloc::{
     boxed::Box,
@@ -9,16 +11,6 @@ use alloc::{
 };
 use core::mem::MaybeUninit;
 use elf::{Elf, ElfError, PFlags, PType};
-
-#[cfg(target_arch = "aarch64")]
-use crate::arch::arm64::cpu::Context;
-#[cfg(target_arch = "riscv64")]
-use crate::arch::riscv64::cpu::Context;
-
-#[cfg(target_arch = "aarch64")]
-use crate::arch::arm64::page::PageManager;
-#[cfg(target_arch = "riscv64")]
-use crate::arch::riscv64::page::PageManager;
 
 pub static mut SCHEDULER: MaybeUninit<Scheduler> = MaybeUninit::uninit();
 
@@ -38,7 +30,7 @@ impl Scheduler {
     pub fn create_from_elf(&mut self, elf_bytes: &[u8]) -> Result<usize, ElfError> {
         let elf = Elf::parse(elf_bytes)?;
 
-        let mut page = unsafe { Box::new(PageManager::new()) };
+        let mut page = unsafe { Box::new(PageMapper::new()) };
         let stack = unsafe { alloc_pages!(USER_STACK_PAGES) };
         unsafe {
             page.map_kernel_region();
@@ -99,7 +91,8 @@ impl Scheduler {
             stack,
         };
         self.tasks.insert(pid, task);
-        self.vruntime.insert((0, pid));
+        let (min_vruntime, _) = self.vruntime.first().unwrap();
+        self.vruntime.insert((*min_vruntime, pid));
 
         Ok(pid)
     }
@@ -109,16 +102,33 @@ impl Scheduler {
     pub fn current_task_mut(&mut self) -> &mut Task {
         self.tasks.get_mut(&self.current_pid).unwrap()
     }
-    pub fn schedule(&mut self) {
+    /**
+     * Do task schedule, and return the next task.
+     */
+    pub fn schedule(&mut self) -> &Task {
         let (mut vruntime, pid) = self.vruntime.pop_first().unwrap();
         let task = self.tasks.get(&pid).unwrap();
         vruntime += (task.nice + NICE_MAX) as usize; // higher nice -> larger vruntime
         self.vruntime.insert((vruntime, pid));
         self.current_pid = pid;
+
+        self.current_task()
     }
     pub fn kill(&mut self, pid: usize) {
         self.tasks.remove(&pid);
         self.vruntime.retain(|(_, this_pid)| *this_pid != pid);
+    }
+    /**
+     * Schedule, store context of current task, and set the context for the next task,
+     * and return the next task.
+     */
+    pub fn switch_task(&mut self, ctx: *mut Context) -> &Task {
+        self.current_task_mut().context = unsafe { ctx.read() };
+        let next_task = self.schedule();
+        let next_ctx = next_task.context.clone();
+        unsafe { ctx.write(next_ctx) };
+
+        next_task
     }
 }
 
@@ -131,7 +141,7 @@ pub struct Task {
     pub uid: usize,
     pub pid: usize,
     pub ppid: usize,
-    pub page: Box<dyn PageManagement>,
+    pub page: Box<dyn Paging>,
     pub nice: isize,
     pub context: Context,
     /** Track pages allocations */
@@ -169,10 +179,10 @@ pub unsafe fn task_init() {
     }
 
     #[cfg(target_arch = "riscv64")]
-    let kernel_page = unsafe { Box::new(PageManager::from_ppn(KERNEL_PT.assume_init() as u64)) };
+    let kernel_page = unsafe { Box::new(PageMapper::from_ppn(KERNEL_PT.assume_init() as u64)) };
     #[cfg(target_arch = "aarch64")]
     let kernel_page =
-        unsafe { Box::new(PageManager::from_ttbrx_el1(KERNEL_PT.assume_init() as u64)) };
+        unsafe { Box::new(PageMapper::from_ttbrx_el1(KERNEL_PT.assume_init() as u64)) };
     let kernel_task = Task {
         page: kernel_page,
         uid: 0,
@@ -206,7 +216,7 @@ pub unsafe fn kernel_fork() {
         let new_task = Task {
             uid: current_task.uid,
             pid: scheduler.max_pid + 1,
-            page: Box::new(PageManager::new()),
+            page: Box::new(PageMapper::new()),
             ppid: current_task.pid,
             nice: current_task.nice,
             context: Context::default(),

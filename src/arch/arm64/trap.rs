@@ -64,6 +64,7 @@ pub unsafe extern "C" fn el1_irq_trap_handler(ctx: *mut Context) {
 
     let irq = unsafe { gicc_mmio_read(GICC_IAR) };
     if irq == INTID_VTIMER {
+        crate::time::timer();
         set_timer();
         task_switch(ctx);
         kernel_pt_do(|| unsafe {
@@ -77,11 +78,8 @@ fn task_switch(ctx: *mut Context) {
     if scheduler.current_task().pid != KERNEL_PID {
         unsafe { asm!("mrs {}, SP_EL0", out(reg)(*ctx).sp) };
     }
-    scheduler.current_task_mut().context = unsafe { ctx.read() };
-    scheduler.schedule();
-    let next_task = scheduler.current_task();
-    let next_ctx = next_task.context.clone();
-    unsafe { ctx.write(next_ctx) };
+
+    let next_task = scheduler.switch_task(ctx);
     if next_task.pid != KERNEL_PID {
         unsafe { asm!("msr SP_EL0, {}", in(reg) (*ctx).sp) };
     }

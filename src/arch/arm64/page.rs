@@ -5,7 +5,7 @@
 use crate::{
     alloc_pages, free_pages,
     page::PAGE_SIZE,
-    page::{PageACL, PageManagement},
+    page::{PageACL, Paging},
 };
 use core::arch::asm;
 
@@ -123,11 +123,11 @@ impl PageTable {
     }
 }
 
-pub struct PageManager {
+pub struct PageMapper {
     pub root: PageTable,
 }
 
-impl PageManager {
+impl PageMapper {
     pub unsafe fn new() -> Self {
         let root_pdir = unsafe { alloc_page_dir() };
         Self {
@@ -186,7 +186,7 @@ impl PageManager {
     }
 }
 
-impl PageManagement for PageManager {
+impl Paging for PageMapper {
     unsafe fn map(&mut self, mut vpn: usize, mut ppn: usize, mut pages: usize, mode: &[PageACL]) {
         let mut mode_u64 = 0;
         if mode.contains(&PageACL::User) {

@@ -4,7 +4,7 @@
 
 use crate::{
     alloc_pages, free_pages,
-    page::{PAGE_SIZE, PageACL, PageManagement},
+    page::{PAGE_SIZE, PageACL, Paging},
 };
 use alloc::vec::Vec;
 use core::arch::asm;
@@ -132,11 +132,11 @@ impl PageTable {
     }
 }
 
-pub struct PageManager {
+pub struct PageMapper {
     pub root: PageTable,
 }
 
-impl PageManager {
+impl PageMapper {
     pub unsafe fn new() -> Self {
         let root_pt = unsafe { alloc_page_dir() };
         Self {
@@ -221,7 +221,7 @@ impl PageManager {
     }
 }
 
-impl PageManagement for PageManager {
+impl Paging for PageMapper {
     unsafe fn map(&mut self, mut vpn: usize, mut ppn: usize, mut pages: usize, mode: &[PageACL]) {
         /* convert ACLs list into riscv PTE mode field bits */
         let mut mode_u64 = 0;
