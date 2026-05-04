@@ -86,10 +86,12 @@ pub mod asm_wrap {
 }
 
 unsafe extern "C" {
+    fn mtrap();
     fn trap_switch_to_s_level();
 }
 
 pub unsafe fn cpu_init() {
+    #[cfg(feature = "riscv_m_mode")]
     unsafe {
         asm!("csrw mideleg, {}", in(reg) 0xffff);
         let medeleg = MEDELEG_ILLEGAL_INS | MEDELEG_ECALL_U;
@@ -99,9 +101,8 @@ pub unsafe fn cpu_init() {
 
 pub unsafe fn switch_to_s_level() {
     unsafe {
-        let mtvec = mtvec_r();
-        mtvec_w(trap_switch_to_s_level as *const u64 as u64);
-        asm!("mv t0, {}", in(reg) mtvec);
+        mtvec_w(trap_switch_to_s_level as *const () as u64);
+        asm!("mv t0, {}", in(reg) mtrap as *const () as u64);
         asm!("ecall");
     }
 }

@@ -1,7 +1,7 @@
 use super::cpu::Context;
 use crate::{
     arch::riscv64::{page::MODE_SV39, *},
-    page::KERNEL_PT,
+    page::{KERNEL_PT, Paging},
     task::{KERNEL_PID, SCHEDULER},
 };
 use core::arch::{asm, global_asm};

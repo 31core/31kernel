@@ -50,9 +50,10 @@ pub fn init_gic_regs(node: &Node) -> Result<(), &str> {
             || check_compatible(compatible, "arm,gic-400"))
         && let Some(reg) = node.get_property("reg")
     {
-        use crate::page::{KERNEL_PT, PAGE_SIZE, Paging};
-        let mut kernel_pt =
-            unsafe { super::page::PageMapper::from_ttbrx_el1(KERNEL_PT.assume_init() as u64) };
+        use crate::page::{KERNEL_PT, PAGE_SIZE, Paging, pa_to_va};
+        let mut kernel_pt = unsafe {
+            super::page::PageMapper::from_ttbrx_el1(pa_to_va(KERNEL_PT.assume_init()) as u64)
+        };
 
         let regs = parse_reg(reg, node.address_cells, node.size_cells);
 

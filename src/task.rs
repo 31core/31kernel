@@ -2,23 +2,25 @@ use crate::{
     alloc_pages,
     arch::{Context, PageMapper},
     free_pages,
-    page::{KERNEL_PT, PAGE_SIZE, Paging},
+    page::{KERNEL_PT, PAGE_SIZE, Paging, ppn_to_vpn, vpn_to_ppn},
 };
 use alloc::{
-    boxed::Box,
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
 use core::mem::MaybeUninit;
 use elf::{Elf, ElfError, PFlags, PType};
 
-pub static mut SCHEDULER: MaybeUninit<Scheduler> = MaybeUninit::uninit();
+pub static mut SCHEDULER: MaybeUninit<Scheduler<PageMapper>> = MaybeUninit::uninit();
 
 const USER_STACK_PAGES: usize = 16;
 
 #[derive(Default)]
-pub struct Scheduler {
-    pub tasks: BTreeMap<usize, Task>,
+pub struct Scheduler<P>
+where
+    P: Paging,
+{
+    pub tasks: BTreeMap<usize, Task<P>>,
     /** (vruntime, pid) */
     pub vruntime: BTreeSet<(usize, usize)>,
     current_pid: usize,
@@ -26,16 +28,16 @@ pub struct Scheduler {
     trap_stack: usize,
 }
 
-impl Scheduler {
+impl<P: Paging> Scheduler<P> {
     pub fn create_from_elf(&mut self, elf_bytes: &[u8]) -> Result<usize, ElfError> {
         let elf = Elf::parse(elf_bytes)?;
 
-        let mut page = unsafe { Box::new(PageMapper::new()) };
+        let mut page = unsafe { P::new() };
         let stack = unsafe { alloc_pages!(USER_STACK_PAGES) };
         unsafe {
             page.map_kernel_region();
-            page.map_data(self.trap_stack, self.trap_stack, 16);
-            page.map_data_u(stack, stack, USER_STACK_PAGES);
+            page.map_data(self.trap_stack, vpn_to_ppn(self.trap_stack), 16);
+            page.map_data_u(stack, vpn_to_ppn(stack), USER_STACK_PAGES);
         }
         let mut page_allocs = Vec::new();
 
@@ -44,8 +46,8 @@ impl Scheduler {
                 let v_page = prog.v_addr / PAGE_SIZE;
                 let v_pages = prog.p_memsz.div_ceil(PAGE_SIZE);
 
-                let p_page = unsafe { alloc_pages!(v_pages) };
-                page_allocs.push((p_page, v_pages));
+                let p_page = unsafe { vpn_to_ppn(alloc_pages!(v_pages)) };
+                page_allocs.push((ppn_to_vpn(p_page), v_pages));
                 if prog.p_flags.contains(&PFlags::Exec) {
                     unsafe { page.map_text_u(v_page, p_page, v_pages) };
                 } else if prog.p_flags.contains(&PFlags::Write) {
@@ -58,7 +60,7 @@ impl Scheduler {
                 unsafe {
                     core::ptr::copy(
                         elf_bytes[prog.p_offset..].as_ptr(),
-                        (p_page * PAGE_SIZE + p_off) as *mut u8,
+                        (ppn_to_vpn(p_page) * PAGE_SIZE + p_off) as *mut u8,
                         prog.p_filesz,
                     )
                 };
@@ -96,16 +98,16 @@ impl Scheduler {
 
         Ok(pid)
     }
-    pub fn current_task(&self) -> &Task {
+    pub fn current_task(&self) -> &Task<P> {
         self.tasks.get(&self.current_pid).unwrap()
     }
-    pub fn current_task_mut(&mut self) -> &mut Task {
+    pub fn current_task_mut(&mut self) -> &mut Task<P> {
         self.tasks.get_mut(&self.current_pid).unwrap()
     }
     /**
      * Do task schedule, and return the next task.
      */
-    pub fn schedule(&mut self) -> &Task {
+    pub fn schedule(&mut self) -> &Task<P> {
         let (mut vruntime, pid) = self.vruntime.pop_first().unwrap();
         let task = self.tasks.get(&pid).unwrap();
         vruntime += (task.nice + NICE_MAX) as usize; // higher nice -> larger vruntime
@@ -122,7 +124,7 @@ impl Scheduler {
      * Schedule, store context of current task, and set the context for the next task,
      * and return the next task.
      */
-    pub fn switch_task(&mut self, ctx: *mut Context) -> &Task {
+    pub fn switch_task(&mut self, ctx: *mut Context) -> &Task<P> {
         self.current_task_mut().context = unsafe { ctx.read() };
         let next_task = self.schedule();
         let next_ctx = next_task.context.clone();
@@ -137,11 +139,14 @@ const NICE_DEFAULT: isize = 0;
 const NICE_MAX: isize = 19;
 const NICE_MIN: isize = -20;
 
-pub struct Task {
+pub struct Task<P>
+where
+    P: Paging,
+{
     pub uid: usize,
     pub pid: usize,
     pub ppid: usize,
-    pub page: Box<dyn Paging>,
+    pub page: P,
     pub nice: isize,
     pub context: Context,
     /** Track pages allocations */
@@ -150,9 +155,9 @@ pub struct Task {
     stack: usize,
 }
 
-unsafe impl Sync for Task {}
+unsafe impl<P: Paging> Sync for Task<P> {}
 
-impl Task {
+impl<P: Paging> Task<P> {
     pub fn renice(&mut self, nice: isize) {
         if (NICE_MIN..=NICE_MAX).contains(&nice) {
             self.nice = nice;
@@ -160,7 +165,7 @@ impl Task {
     }
 }
 
-impl Drop for Task {
+impl<P: Paging> Drop for Task<P> {
     fn drop(&mut self) {
         unsafe {
             self.page.destroy();
@@ -179,10 +184,15 @@ pub unsafe fn task_init() {
     }
 
     #[cfg(target_arch = "riscv64")]
-    let kernel_page = unsafe { Box::new(PageMapper::from_ppn(KERNEL_PT.assume_init() as u64)) };
+    let kernel_page = unsafe {
+        use crate::page::ppn_to_vpn;
+        PageMapper::from_pn(ppn_to_vpn(KERNEL_PT.assume_init()) as u64)
+    };
     #[cfg(target_arch = "aarch64")]
-    let kernel_page =
-        unsafe { Box::new(PageMapper::from_ttbrx_el1(KERNEL_PT.assume_init() as u64)) };
+    let kernel_page = unsafe {
+        use crate::page::pa_to_va;
+        PageMapper::from_ttbrx_el1(pa_to_va(KERNEL_PT.assume_init()) as u64)
+    };
     let kernel_task = Task {
         page: kernel_page,
         uid: 0,
@@ -204,7 +214,7 @@ pub unsafe fn task_init() {
             vruntime,
             current_pid: KERNEL_PID,
             trap_stack,
-            ..Default::default()
+            max_pid: 0,
         })
     };
 }
@@ -216,7 +226,7 @@ pub unsafe fn kernel_fork() {
         let new_task = Task {
             uid: current_task.uid,
             pid: scheduler.max_pid + 1,
-            page: Box::new(PageMapper::new()),
+            page: PageMapper::new(),
             ppid: current_task.pid,
             nice: current_task.nice,
             context: Context::default(),

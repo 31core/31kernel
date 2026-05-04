@@ -14,5 +14,7 @@
 |Directory |Description|
 |----------|-----------|
 |crypto    |Cryptographic algorithm implementations.|
-|src/arch  |Architecture related code.|
+|doc       |Documentations.|
+|lib       |Common libraries.   |
+|src/arch  |Architecture-specific code.|
 |src/device|Device drivers.|

@@ -26,10 +26,10 @@ all:
 	@cargo rustc --target $(RUST_TARGET) $(RUST_FLAGS) -- -Clink-arg=-Tsrc/lds/virt.lds
 
 run: all
-	@$(QEMU) -M $(MACH) -cpu $(QEMU_CPU) -smp $(CPUS) -m $(MEM) -nographic -serial mon:stdio -bios none -kernel $(OUT)
+	@$(QEMU) -M $(MACH) -cpu $(QEMU_CPU) -smp $(CPUS) -m $(MEM) -nographic -serial mon:stdio -kernel $(OUT)
 
 debug: all
-	@$(QEMU) -M $(MACH) -cpu $(QEMU_CPU) -smp $(CPUS) -m $(MEM) -nographic -serial mon:stdio -bios none -kernel $(OUT) -S -s
+	@$(QEMU) -M $(MACH) -cpu $(QEMU_CPU) -smp $(CPUS) -m $(MEM) -nographic -serial mon:stdio -kernel $(OUT) -S -s
 
 clean:
 	@cargo clean

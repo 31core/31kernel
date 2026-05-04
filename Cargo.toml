@@ -5,6 +5,9 @@ edition = "2024"
 authors = ["31core <31core@tutanota.com>"]
 license-file = "LICENSE"
 
+[features]
+riscv_m_mode = []
+
 [dependencies]
 # cryptograthy libraries
 aes = { path = "crypto/aes" }

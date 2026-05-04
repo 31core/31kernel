@@ -21,7 +21,8 @@ mod vfs;
 
 use alloc::boxed::Box;
 use core::{arch::asm, ptr::addr_of};
-use dtb::{DeviceTree, Node, utils::*};
+use dtb::{DeviceTree, Node, ParseError, utils::*};
+use page::Paging;
 
 extern crate alloc;
 
@@ -74,6 +75,7 @@ fn cpu_init() {
 
         cpu::cpu_init();
         enable_timer();
+        #[cfg(feature = "riscv_m_mode")]
         cpu::switch_to_s_level();
     }
 }
@@ -135,6 +137,40 @@ fn setup_console(dtb: &DeviceTree) {
     }
 }
 
+fn load_dtb(dtb_addr: u64) -> Result<DeviceTree, ParseError> {
+    use arch::PageMapper;
+    use page::{KERNEL_PT, PAGE_SIZE};
+    unsafe {
+        #[cfg(target_arch = "riscv64")]
+        let mut kernel_page = {
+            use page::ppn_to_vpn;
+            PageMapper::from_pn(ppn_to_vpn(KERNEL_PT.assume_init()) as u64)
+        };
+        #[cfg(target_arch = "aarch64")]
+        let mut kernel_page = {
+            use page::pa_to_va;
+            PageMapper::from_ttbrx_el1(pa_to_va(KERNEL_PT.assume_init()) as u64)
+        };
+
+        let dtb_ptr = dtb_addr as *const u8;
+        kernel_page.map_rodata(
+            dtb_addr as usize / PAGE_SIZE,
+            dtb_addr as usize / PAGE_SIZE,
+            1,
+        );
+        kernel_page.refresh();
+        let dtb_size = DeviceTree::detect_totalsize(dtb_ptr);
+        kernel_page.map_rodata(
+            dtb_addr as usize / PAGE_SIZE + 1,
+            dtb_addr as usize / PAGE_SIZE + 1,
+            dtb_size.div_ceil(PAGE_SIZE) - 1,
+        );
+        kernel_page.refresh();
+        let dtb_bytes = core::slice::from_raw_parts(dtb_ptr, dtb_size);
+        DeviceTree::parse(dtb_bytes)
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     clear_bss();
@@ -147,14 +183,9 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
         );
     }
 
-    let dtb = unsafe {
-        let dtb_ptr = dtb_addr as *const u8;
-        let dtb_size = DeviceTree::detect_totalsize(dtb_ptr);
-        let dtb_bytes = core::slice::from_raw_parts(dtb_ptr, dtb_size);
-        DeviceTree::parse(dtb_bytes)
-    };
-
     page::kernel_pt_init();
+    let dtb = load_dtb(dtb_addr);
+
     if let Ok(dtb) = &dtb {
         soc_init(dtb);
     }

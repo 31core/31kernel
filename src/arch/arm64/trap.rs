@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     arch::arm64::gic::*,
-    page::KERNEL_PT,
+    page::{KERNEL_PT, Paging},
     task::{KERNEL_PID, SCHEDULER},
 };
 use core::arch::{asm, global_asm};

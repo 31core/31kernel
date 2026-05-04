@@ -1,12 +1,22 @@
-BASE_ADDRESS = 0x80000000;
+VIRT_ADDR = 0xffffffc040000000;
+PHY_ADDR = 0x40000000;
+ENTRY(_start)
 
 SECTIONS
 {
-    . = BASE_ADDRESS;
-
-    kernel_start = .;
-    .text : {
+    . = PHY_ADDR;
+    .text.entry : AT(PHY_ADDR) {
         *(.text.entry)
+    }
+    .data.entry : {
+        *(.data.entry)
+        . = ALIGN(4K);
+        _entry_end = .;
+    }
+
+    . = VIRT_ADDR + (_entry_end - PHY_ADDR);
+    kernel_start = .;
+    .text : AT(PHY_ADDR + (_entry_end - PHY_ADDR)) {
         *(.text .text.*)
     }
 

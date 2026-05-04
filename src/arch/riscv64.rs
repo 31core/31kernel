@@ -19,19 +19,23 @@ pub unsafe fn enable_timer() {
     unsafe {
         set_timer(TIMER_INTERVAL);
 
-        mie_w(mie_r() | (1 << 5)); // set STIE flag for mie
         sie_w(sie_r() | (1 << 5)); // set STIE flag for sie
 
-        /* enable sstc extension */
-        let mut menvcfg: u64;
-        asm!("csrr {}, menvcfg", out(reg) menvcfg);
-        menvcfg |= 1 << 63;
-        asm!("csrw menvcfg, {}", in(reg) menvcfg);
+        #[cfg(feature = "riscv_m_mode")]
+        {
+            mie_w(mie_r() | (1 << 5)); // set STIE flag for mie
 
-        let mut mcounteren: u64;
-        asm!("csrr {}, mcounteren", out(reg) mcounteren);
-        mcounteren |= 2;
-        asm!("csrw mcounteren, {}", in(reg) mcounteren);
+            /* enable sstc extension */
+            let mut menvcfg: u64;
+            asm!("csrr {}, menvcfg", out(reg) menvcfg);
+            menvcfg |= 1 << 63;
+            asm!("csrw menvcfg, {}", in(reg) menvcfg);
+
+            let mut mcounteren: u64;
+            asm!("csrr {}, mcounteren", out(reg) mcounteren);
+            mcounteren |= 2;
+            asm!("csrw mcounteren, {}", in(reg) mcounteren);
+        }
     }
 }
 

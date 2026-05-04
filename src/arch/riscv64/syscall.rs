@@ -2,7 +2,7 @@ use super::cpu::Context;
 use crate::syscall::*;
 
 pub unsafe fn syscall(ctx: *mut Context) {
-    let syscall_num = unsafe { (*ctx).x[9] };
+    let syscall_num = unsafe { (*ctx).x[16] };
 
     #[allow(clippy::single_match)]
     match syscall_num {
