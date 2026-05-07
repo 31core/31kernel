@@ -7,6 +7,7 @@ mod arch;
 mod buddy_allocator;
 mod devfs;
 mod device;
+mod global;
 mod kmsg;
 mod lang_items;
 mod mcache;
@@ -48,15 +49,6 @@ unsafe extern "C" {
     static HEAP_START: u8;
 }
 
-macro_rules! static_mut {
-    ($var:expr) => {
-        #[allow(unused_unsafe)]
-        unsafe {
-            (*(&raw mut $var)).assume_init_mut()
-        }
-    };
-}
-
 const MEM_SIZE: usize = 128 * 1024 * 1024;
 const STACK_SIZE: usize = 64 * 4096;
 const PTR_BYTES: usize = size_of::<usize>();
@@ -92,7 +84,9 @@ fn soc_init(dtb: &DeviceTree) {
 fn setup_console(dtb: &DeviceTree) {
     fn setup_by_serial0_node(serial0_node: &Node) {
         use device::uart::{ns16550::NS16550, pl011::PL011};
-        let kmsg = unsafe { (*(&raw mut kmsg::KMSG)).assume_init_mut() };
+
+        let mut kmsg_guard = kmsg::KMSG.lock();
+        let kmsg = unsafe { kmsg_guard.assume_init_mut() };
         if let Some(compatible) = serial0_node.get_property("compatible")
             && check_compatible(compatible, "arm,pl011")
             && let Some(reg) = serial0_node.get_property("reg")
@@ -111,9 +105,11 @@ fn setup_console(dtb: &DeviceTree) {
         if let Some(reg) = serial0_node.get_property("reg") {
             let regs = parse_reg(reg, serial0_node.address_cells, serial0_node.size_cells);
 
-            let kernel_pt = &mut static_mut!(task::SCHEDULER).current_task_mut().page;
-            for (reg_addr, reg_size) in regs {
-                unsafe {
+            unsafe {
+                let mut scheduler_guard = task::SCHEDULER.lock();
+                let scheduler = scheduler_guard.assume_init_mut();
+                let kernel_pt = &mut scheduler.current_task_mut().page;
+                for (reg_addr, reg_size) in regs {
                     kernel_pt.map_data(
                         reg_addr as usize / page::PAGE_SIZE,
                         reg_addr as usize / page::PAGE_SIZE,
@@ -189,17 +185,16 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     if let Ok(dtb) = &dtb {
         soc_init(dtb);
     }
-    unsafe {
-        task::task_init();
-        trap::enable_interrupts();
-    }
 
+    kmsg::kmsg_init();
+    task::task_init();
     rand::rand_init();
     vfs::vfs_init();
-    kmsg::kmsg_init();
     if let Ok(dtb) = &dtb {
         setup_console(dtb);
     }
+
+    unsafe { trap::enable_interrupts() };
 
     panic!();
 }

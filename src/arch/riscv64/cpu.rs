@@ -1,6 +1,3 @@
-use asm_wrap::*;
-use core::arch::asm;
-
 const MEDELEG_ILLEGAL_INS: u64 = 1 << 2;
 const MEDELEG_ECALL_U: u64 = 1 << 8;
 
@@ -93,13 +90,19 @@ unsafe extern "C" {
 pub unsafe fn cpu_init() {
     #[cfg(feature = "riscv_m_mode")]
     unsafe {
+        use core::arch::asm;
+
         asm!("csrw mideleg, {}", in(reg) 0xffff);
         let medeleg = MEDELEG_ILLEGAL_INS | MEDELEG_ECALL_U;
         asm!("csrw medeleg, {}", in(reg) medeleg);
     }
 }
 
+#[cfg(feature = "riscv_m_mode")]
 pub unsafe fn switch_to_s_level() {
+    use asm_wrap::*;
+    use core::arch::asm;
+
     unsafe {
         mtvec_w(trap_switch_to_s_level as *const () as u64);
         asm!("mv t0, {}", in(reg) mtrap as *const () as u64);

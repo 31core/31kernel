@@ -1,6 +1,7 @@
 use crate::{
     kernel_wait,
     kmsg::{KMSG, KernelMessageLevel},
+    lock_uinit,
 };
 use alloc::format;
 use core::panic::PanicInfo;
@@ -9,12 +10,11 @@ use core::panic::PanicInfo;
 fn panic(info: &PanicInfo) -> ! {
     unsafe {
         match info.location() {
-            Some(location) => (*(&raw mut KMSG)).assume_init_mut().add_message(
+            Some(location) => lock_uinit!(KMSG).add_message(
                 KernelMessageLevel::Fatal,
                 format!("{} at {}\n", info.message(), location),
             ),
-            None => (*(&raw mut KMSG))
-                .assume_init_mut()
+            None => lock_uinit!(KMSG)
                 .add_message(KernelMessageLevel::Fatal, format!("{}\n", info.message())),
         }
     }

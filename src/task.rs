@@ -1,7 +1,8 @@
+use crate::{alloc_pages, free_pages};
 use crate::{
-    alloc_pages,
     arch::{Context, PageMapper},
-    free_pages,
+    global::GlobalUninit,
+    mutex::Mutex,
     page::{KERNEL_PT, PAGE_SIZE, Paging, ppn_to_vpn, vpn_to_ppn},
 };
 use alloc::{
@@ -11,14 +12,14 @@ use alloc::{
 use core::mem::MaybeUninit;
 use elf::{Elf, ElfError, PFlags, PType};
 
-pub static mut SCHEDULER: MaybeUninit<Scheduler<PageMapper>> = MaybeUninit::uninit();
+pub static SCHEDULER: GlobalUninit<Scheduler<PageMapper>> = Mutex::new(MaybeUninit::uninit());
 
 const USER_STACK_PAGES: usize = 16;
 
 #[derive(Default)]
 pub struct Scheduler<P>
 where
-    P: Paging,
+    P: Paging + Send,
 {
     pub tasks: BTreeMap<usize, Task<P>>,
     /** (vruntime, pid) */
@@ -28,7 +29,10 @@ where
     trap_stack: usize,
 }
 
-impl<P: Paging> Scheduler<P> {
+impl<P> Scheduler<P>
+where
+    P: Paging + Send,
+{
     pub fn create_from_elf(&mut self, elf_bytes: &[u8]) -> Result<usize, ElfError> {
         let elf = Elf::parse(elf_bytes)?;
 
@@ -78,6 +82,10 @@ impl<P: Paging> Scheduler<P> {
         {
             context.elr_el1 = elf.e_entry as u64;
             context.sp = ((stack + USER_STACK_PAGES) * PAGE_SIZE) as u64;
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            context.rsp = ((stack + USER_STACK_PAGES) * PAGE_SIZE) as u64;
         }
 
         self.max_pid += 1;
@@ -141,7 +149,7 @@ const NICE_MIN: isize = -20;
 
 pub struct Task<P>
 where
-    P: Paging,
+    P: Paging + Send,
 {
     pub uid: usize,
     pub pid: usize,
@@ -155,9 +163,12 @@ where
     stack: usize,
 }
 
-unsafe impl<P: Paging> Sync for Task<P> {}
+unsafe impl<P> Sync for Task<P> where P: Paging + Send {}
 
-impl<P: Paging> Task<P> {
+impl<P> Task<P>
+where
+    P: Paging + Send,
+{
     pub fn renice(&mut self, nice: isize) {
         if (NICE_MIN..=NICE_MAX).contains(&nice) {
             self.nice = nice;
@@ -165,7 +176,10 @@ impl<P: Paging> Task<P> {
     }
 }
 
-impl<P: Paging> Drop for Task<P> {
+impl<P> Drop for Task<P>
+where
+    P: Paging + Send,
+{
     fn drop(&mut self) {
         unsafe {
             self.page.destroy();
@@ -177,7 +191,7 @@ impl<P: Paging> Drop for Task<P> {
     }
 }
 
-pub unsafe fn task_init() {
+pub fn task_init() {
     let trap_stack = unsafe { alloc_pages!(16) };
     unsafe {
         crate::trap::trap_stack_init(trap_stack);
@@ -208,20 +222,20 @@ pub unsafe fn task_init() {
     tasks.insert(kernel_task.pid, kernel_task);
     let mut vruntime = BTreeSet::new();
     vruntime.insert((0, KERNEL_PID));
-    unsafe {
-        SCHEDULER = MaybeUninit::new(Scheduler {
-            tasks,
-            vruntime,
-            current_pid: KERNEL_PID,
-            trap_stack,
-            max_pid: 0,
-        })
-    };
+
+    *SCHEDULER.lock() = MaybeUninit::new(Scheduler {
+        tasks,
+        vruntime,
+        current_pid: KERNEL_PID,
+        trap_stack,
+        max_pid: 0,
+    });
 }
 
 pub unsafe fn kernel_fork() {
     unsafe {
-        let scheduler = (*(&raw mut SCHEDULER)).assume_init_mut();
+        let mut scheduler_guard = SCHEDULER.lock();
+        let scheduler = scheduler_guard.assume_init_mut();
         let current_task = scheduler.current_task();
         let new_task = Task {
             uid: current_task.uid,

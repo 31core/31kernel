@@ -2,7 +2,7 @@
  * Kernel debug message.
  */
 
-use crate::device::CharDev;
+use crate::{device::CharDev, global::GlobalUninit, mutex::Mutex};
 use alloc::{
     boxed::Box,
     string::{String, ToString},
@@ -14,15 +14,15 @@ use core::{
     mem::MaybeUninit,
 };
 
-pub static mut KMSG: MaybeUninit<KernelMessage> = MaybeUninit::uninit();
+pub static KMSG: GlobalUninit<KernelMessage> = Mutex::new(MaybeUninit::uninit());
 
 #[macro_export]
 macro_rules! printk_error {
     ($($arg:tt)*) => {
-        {
-            #[allow(unused_unsafe)]
-            let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
-            kmsg.error(&alloc::format!($($arg)*));
+        #[allow(unused_unsafe)]
+        #[allow(clippy::macro_metavars_in_unsafe)]
+        unsafe {
+            lock_uinit!($crate::kmsg::KMSG).error(&alloc::format!($($arg)*));
         }
     };
 }
@@ -30,10 +30,10 @@ macro_rules! printk_error {
 #[macro_export]
 macro_rules! printk_warning {
     ($($arg:tt)*) => {
-        {
-            #[allow(unused_unsafe)]
-            let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
-            kmsg.warning(&alloc::format!($($arg)*));
+        #[allow(unused_unsafe)]
+        #[allow(clippy::macro_metavars_in_unsafe)]
+        unsafe {
+            lock_uinit!($crate::kmsg::KMSG).warning(&alloc::format!($($arg)*));
         }
     };
 }
@@ -41,18 +41,17 @@ macro_rules! printk_warning {
 #[macro_export]
 macro_rules! printk {
     ($($arg:tt)*) => {
-        {
-            #[allow(unused_unsafe)]
-            let kmsg = unsafe { (*(&raw mut $crate::kmsg::KMSG)).assume_init_mut() };
-            kmsg.debug(&alloc::format!($($arg)*));
+        #[allow(unused_unsafe)]
+        #[allow(clippy::macro_metavars_in_unsafe)]
+        unsafe {
+            lock_uinit!($crate::kmsg::KMSG).debug(&alloc::format!($($arg)*));
         }
     };
 }
 
 pub fn kmsg_init() {
-    unsafe {
-        KMSG = MaybeUninit::new(KernelMessage::default());
-    }
+    let mut kmsg = KMSG.lock();
+    *kmsg = MaybeUninit::new(KernelMessage::default());
 }
 
 #[derive(Default)]
@@ -107,6 +106,8 @@ pub struct KernelMessage {
     /** If `output_handler` is set, message will outputs when calling `add_message`. */
     pub output_handler: Option<Box<dyn CharDev>>,
 }
+
+unsafe impl Send for KernelMessage {}
 
 impl KernelMessage {
     pub fn fatal<S>(&mut self, msg: S)

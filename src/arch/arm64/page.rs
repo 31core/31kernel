@@ -166,6 +166,8 @@ impl PageMapper {
     }
 }
 
+unsafe impl Send for PageMapper {}
+
 impl Paging for PageMapper {
     unsafe fn new_with_allocator<A>(alloc: &mut A) -> Self
     where

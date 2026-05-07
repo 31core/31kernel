@@ -1,15 +1,18 @@
-use crate::devfs::DevFS;
+/*! Virtual File System */
+
+use crate::{devfs::DevFS, global::GlobalUninit, mutex::Mutex};
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::{mem::MaybeUninit, result::Result};
 
 pub type Path = [String];
 
-pub static mut ROOT_VFS: MaybeUninit<VirtualFileSystem> = MaybeUninit::uninit();
+pub static ROOT_VFS: GlobalUninit<VirtualFileSystem> = Mutex::new(MaybeUninit::uninit());
 
 pub fn vfs_init() {
     unsafe {
-        ROOT_VFS = MaybeUninit::new(VirtualFileSystem::default());
-        (*(&raw mut ROOT_VFS))
+        let mut rootfs = ROOT_VFS.lock();
+        *rootfs = MaybeUninit::new(VirtualFileSystem::default());
+        rootfs
             .assume_init_mut()
             .mount(Box::<DevFS>::default(), &[String::from("dev")]);
     }
@@ -20,6 +23,8 @@ pub struct VirtualFileSystem {
     pub mount_points: Vec<Vec<String>>,
     pub mounted_fs: Vec<Box<dyn FileSystem>>,
 }
+
+unsafe impl Send for VirtualFileSystem {}
 
 impl VirtualFileSystem {
     pub fn open(&mut self, path: &Path) -> Result<File, ()> {

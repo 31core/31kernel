@@ -21,8 +21,10 @@ unsafe fn to_kernel_pt() {
 }
 
 pub unsafe fn kill_task(ctx: *mut Context) {
-    let scheduler = unsafe { (*(&raw mut SCHEDULER)).assume_init_mut() };
-    scheduler.kill(scheduler.current_task().pid);
+    let mut scheduler_guard = SCHEDULER.lock();
+    let scheduler = unsafe { scheduler_guard.assume_init_mut() };
+    let current_pid = scheduler.current_task().pid;
+    scheduler.kill(current_pid);
     scheduler.schedule();
     let next_task = scheduler.current_task();
     let next_ctx = next_task.context.clone();
@@ -74,7 +76,8 @@ pub unsafe extern "C" fn el1_irq_trap_handler(ctx: *mut Context) {
 }
 
 fn task_switch(ctx: *mut Context) {
-    let scheduler = unsafe { (*(&raw mut SCHEDULER)).assume_init_mut() };
+    let mut scheduler_guard = SCHEDULER.lock();
+    let scheduler = unsafe { scheduler_guard.assume_init_mut() };
     if scheduler.current_task().pid != KERNEL_PID {
         unsafe { asm!("mrs {}, SP_EL0", out(reg)(*ctx).sp) };
     }

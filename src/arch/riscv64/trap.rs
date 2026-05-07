@@ -46,8 +46,10 @@ unsafe fn to_kernel_pt() {
  * * Switch to the next task's page table.
  */
 pub unsafe fn kill_task(ctx: *mut Context) {
-    let scheduler = unsafe { (*(&raw mut SCHEDULER)).assume_init_mut() };
-    scheduler.kill(scheduler.current_task().pid);
+    let mut scheduler_guard = SCHEDULER.lock();
+    let scheduler = unsafe { scheduler_guard.assume_init_mut() };
+    let current_pid = scheduler.current_task().pid;
+    scheduler.kill(current_pid);
     scheduler.schedule();
     let next_task = scheduler.current_task();
     let next_ctx = next_task.context.clone();
@@ -84,8 +86,8 @@ pub unsafe extern "C" fn strap_handler(ctx: *mut Context) {
 
         unsafe { to_kernel_pt() };
 
-        let scheduler = unsafe { (*(&raw mut SCHEDULER)).assume_init_mut() };
-
+        let mut scheduler_guard = SCHEDULER.lock();
+        let scheduler = unsafe { scheduler_guard.assume_init_mut() };
         let next_task = scheduler.switch_task(ctx);
         if next_task.pid != KERNEL_PID {
             unsafe { asm!("csrc sstatus, {}", in(reg) 1 << 8) }; // set SPP to user mode

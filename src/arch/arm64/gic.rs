@@ -47,7 +47,8 @@ use dtb::{Node, utils::*};
 pub fn init_gic_regs(node: &Node) -> Result<(), &str> {
     if let Some(compatible) = node.get_property("compatible")
         && (check_compatible(compatible, "arm,cortex-a15-gic")
-            || check_compatible(compatible, "arm,gic-400"))
+            || check_compatible(compatible, "arm,gic-400")
+            || check_compatible(compatible, "arm,gic-v3"))
         && let Some(reg) = node.get_property("reg")
     {
         use crate::page::{KERNEL_PT, PAGE_SIZE, Paging, pa_to_va};

@@ -49,20 +49,20 @@ macro_rules! map_range_with_alloc {
 #[macro_export]
 macro_rules! alloc_pages {
     ($pages_count:expr) => {{
-        use $crate::page::PageAllocator;
-        let allocator = &mut (*(&raw mut $crate::buddy_allocator::BUDDY_ALLOCATOR));
-        allocator.assume_init_mut().alloc_pages($pages_count)
+        use $crate::{buddy_allocator::BUDDY_ALLOCATOR, page::PageAllocator};
+        let mut allocator_guard = BUDDY_ALLOCATOR.lock();
+        let allocator = allocator_guard.assume_init_mut();
+        allocator.alloc_pages($pages_count)
     }};
 }
 
 #[macro_export]
 macro_rules! free_pages {
     ($pages_start:expr, $pages_count:expr) => {{
-        use $crate::page::PageAllocator;
-        let allocator = &mut (*(&raw mut $crate::buddy_allocator::BUDDY_ALLOCATOR));
-        allocator
-            .assume_init_mut()
-            .free_pages($pages_start, $pages_count)
+        use $crate::{buddy_allocator::BUDDY_ALLOCATOR, page::PageAllocator};
+        let mut allocator_guard = BUDDY_ALLOCATOR.lock();
+        let allocator = allocator_guard.assume_init_mut();
+        allocator.free_pages($pages_start, $pages_count)
     }};
 }
 
@@ -110,13 +110,15 @@ pub trait Paging: Sized {
      */
     unsafe fn new() -> Self {
         unsafe {
-            let alloc = (*(&raw mut BUDDY_ALLOCATOR)).assume_init_mut();
+            let mut alloc_guard = BUDDY_ALLOCATOR.lock();
+            let alloc = alloc_guard.assume_init_mut();
             Self::new_with_allocator(alloc)
         }
     }
     unsafe fn map(&mut self, vpn: usize, ppn: usize, pages: usize, mode: &[PageACL]) {
         unsafe {
-            let alloc = (*(&raw mut BUDDY_ALLOCATOR)).assume_init_mut();
+            let mut alloc_guard = BUDDY_ALLOCATOR.lock();
+            let alloc = alloc_guard.assume_init_mut();
             self.map_with_allocator(alloc, vpn, ppn, pages, mode);
         }
     }
@@ -194,7 +196,8 @@ pub trait Paging: Sized {
         A: PageAllocator;
     unsafe fn destroy(&mut self) {
         unsafe {
-            let alloc = (*(&raw mut BUDDY_ALLOCATOR)).assume_init_mut();
+            let mut alloc_guard = BUDDY_ALLOCATOR.lock();
+            let alloc = alloc_guard.assume_init_mut();
             self.destroy_with_allocator(alloc);
         }
     }
@@ -214,7 +217,8 @@ pub trait Paging: Sized {
     /** map kernel memory into vm, using a static page allocator */
     unsafe fn map_kernel_region_bootstrap(&mut self) {
         unsafe {
-            let alloc = &mut (*(&raw mut STATIC_ALLOCATOR));
+            let mut alloc_guard = BUDDY_ALLOCATOR.lock();
+            let alloc = alloc_guard.assume_init_mut();
             /* map .rodata */
             map_range_with_alloc!(alloc, crate::RODATA_START, crate::RODATA_END, self, RO);
             /* map .data */

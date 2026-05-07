@@ -8,6 +8,10 @@ pub unsafe fn enable_interrupts() {
     unsafe {
         crate::arch::arm64::enable_interrupts()
     };
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("sti")
+    };
 }
 
 #[inline(always)]
@@ -19,6 +23,10 @@ pub unsafe fn disable_interrupts() {
     #[cfg(target_arch = "aarch64")]
     unsafe {
         crate::arch::arm64::disable_interrupts()
+    };
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("cli")
     };
 }
 

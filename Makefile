@@ -9,6 +9,10 @@ else ifeq ($(ARCH), arm64)
 	RUST_TARGET=aarch64-unknown-none
 	QEMU=qemu-system-aarch64
 	QEMU_CPU=cortex-a57
+else ifeq ($(ARCH), x86_64)
+	RUST_TARGET=x86_64-unknown-none
+	QEMU=qemu-system-x86_64
+	QEMU_CPU=max
 endif
 
 ifeq ($(TYPE), release)

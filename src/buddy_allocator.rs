@@ -2,13 +2,13 @@
  * Buddy allocator implementation for the kernel heap.
  */
 
-use crate::page::PageAllocator;
+use crate::{global::GlobalUninit, lock_uinit, mutex::Mutex, page::PageAllocator};
 use core::mem::MaybeUninit;
 
 pub const NODE_COMPATIBILITY: usize = 8196;
 const BUDDY_ALLOC_MAX_POW: usize = 64;
 
-pub static mut BUDDY_ALLOCATOR: MaybeUninit<BuddyAllocator> = MaybeUninit::zeroed();
+pub static BUDDY_ALLOCATOR: GlobalUninit<BuddyAllocator> = Mutex::new(MaybeUninit::uninit());
 
 #[derive(Clone, Copy, Debug, Default)]
 /**
@@ -30,9 +30,7 @@ impl FreeNode {
 
 pub unsafe fn init(start_page: usize, pages_count: usize) {
     unsafe {
-        (*(&raw mut BUDDY_ALLOCATOR))
-            .assume_init_mut()
-            .init(start_page, pages_count);
+        lock_uinit!(BUDDY_ALLOCATOR).init(start_page, pages_count);
     }
 }
 
