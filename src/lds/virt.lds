@@ -52,7 +52,7 @@ SECTIONS
     bss_end = .;
 
     /DISCARD/ : {
-        *(.eh_frame)
+        *(.eh_frame*)
     }
 
     . = ALIGN(4K);

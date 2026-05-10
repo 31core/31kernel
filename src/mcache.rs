@@ -2,8 +2,9 @@
  * An mcache allocator for small objects allocation.
  */
 
-use crate::{alloc_pages, buddy_allocator::ceil_to_power_2, free_pages, page::PAGE_SIZE};
-use alloc::alloc::{alloc, dealloc};
+use crate::{
+    alloc_pages, buddy_allocator::ceil_to_power_2, free_pages, mutex::Mutex, page::PAGE_SIZE,
+};
 use core::{
     alloc::{GlobalAlloc, Layout},
     mem::size_of,
@@ -13,19 +14,20 @@ use core::{
 const CACHE_NUM: usize = 1024;
 const SIZE_CLASS_COUNT: usize = 14;
 
-/** Alias to `GLOBAL_ALLOCATOR`, when used as the first allocator. */
-#[doc(hidden)]
-macro_rules! first_mgr {
-    () => {
-        (*(&raw mut GLOBAL_ALLOCATOR))
-    };
+fn first_mgr(current: &CacheManager) -> &CacheManager {
+    let mut mgr = current;
+    while let Some(prev) = mgr.prev {
+        mgr = unsafe { prev.as_ref() };
+    }
+    mgr
 }
 
-#[doc(hidden)]
-macro_rules! ref_to_ptr {
-    ($ref:ident, $type:ident) => {
-        $ref as *const $type as *mut $type
-    };
+fn first_mgr_mut(current: &mut CacheManager) -> &mut CacheManager {
+    let mut mgr = current;
+    while let Some(mut prev) = mgr.prev {
+        mgr = unsafe { prev.as_mut() };
+    }
+    mgr
 }
 
 /**
@@ -66,18 +68,6 @@ fn calc_header_padding(align: usize) -> usize {
     let offset = ptr_size;
     (align - (offset % align)) % align
 }
-
-#[global_allocator]
-static mut GLOBAL_ALLOCATOR: CacheManager = CacheManager {
-    caches: [None; CACHE_NUM],
-    next: None,
-    prev: None,
-    next_partial_free: [None; SIZE_CLASS_COUNT],
-    partial_counts: [0; SIZE_CLASS_COUNT],
-    next_free: None,
-    allocated_caches: 0,
-    is_init: false,
-};
 
 /**
  * A cache cell with the following structure.
@@ -243,11 +233,12 @@ impl CacheManager {
                         self.partial_counts[idx] -= 1;
                         /* delete current node from partial free list */
                         if !self.is_global_allocator() && self.partial_counts[idx] == 0 {
-                            first_mgr!().next_partial_free[idx] = self.next_partial_free[idx];
+                            first_mgr_mut(self).next_partial_free[idx] =
+                                self.next_partial_free[idx];
                         }
                     }
                     let obj = CacheCell { ptr };
-                    obj.write_head(ref_to_ptr!(self, Self));
+                    obj.write_head(self as *mut Self);
                     return obj.object_ptr(padding);
                 }
             }
@@ -280,8 +271,8 @@ impl CacheManager {
 
             /* insert current manager to partial free list */
             if !self.is_global_allocator() && self.partial_counts[idx] == 0 {
-                self.next_partial_free[idx] = first_mgr!().next_partial_free[idx];
-                first_mgr!().next_partial_free[idx] = NonNull::new(ref_to_ptr!(self, Self));
+                self.next_partial_free[idx] = first_mgr(self).next_partial_free[idx];
+                first_mgr_mut(self).next_partial_free[idx] = NonNull::new(self as *mut Self);
             }
 
             self.add_cache(cache_addr);
@@ -289,26 +280,26 @@ impl CacheManager {
 
             /* delete current manager from free list */
             if !self.is_global_allocator() && self.is_cache_full() {
-                first_mgr!().next_free = self.next_free;
+                first_mgr_mut(self).next_free = self.next_free;
             }
 
             let cell = CacheCell { ptr };
-            cell.write_head(ref_to_ptr!(self, Self));
+            cell.write_head(self as *mut Self);
             cell.object_ptr(padding)
         }
     }
-    unsafe fn allocate_inner(&mut self, layout: Layout) -> *mut u8 {
+    unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
         unsafe {
             if !self.is_init {
                 self.is_init = true;
-                let next = alloc(Layout::new::<Self>()) as *mut Self;
+                let next = self.alloc(Layout::new::<Self>()) as *mut Self;
                 self.next = NonNull::new(next);
                 next.write(Self {
-                    prev: NonNull::new(ref_to_ptr!(self, Self)),
-                    next_free: first_mgr!().next_free,
+                    prev: NonNull::new(self as *mut Self),
+                    next_free: first_mgr(self).next_free,
                     ..Default::default()
                 });
-                first_mgr!().next_free = NonNull::new(next);
+                first_mgr_mut(self).next_free = NonNull::new(next);
             }
 
             let padding = calc_header_padding(layout.align());
@@ -336,33 +327,30 @@ impl CacheManager {
             }
         }
     }
-}
-
-unsafe impl GlobalAlloc for CacheManager {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe { (*(&raw mut GLOBAL_ALLOCATOR)).allocate_inner(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
         let padding = calc_header_padding(layout.align());
         let alloc_size = layout.size() + padding + size_of::<*mut Self>();
+        let first_mgr = first_mgr_mut(self);
 
         unsafe {
             if let Some((_, idx)) = size_to_class(alloc_size) {
-                let mgr = (ptr as *mut *mut Self)
+                let mgr_ptr = (ptr as *mut *mut Self)
                     .byte_sub(padding + size_of::<*mut Self>())
                     .read();
+                let mgr = &mut *mgr_ptr;
+                let is_global = mgr.is_global_allocator();
 
-                for i in &mut (*mgr).caches {
+                for i in &mut mgr.caches {
                     if let Some(mut cache) = *i
                         && cache.as_ref().in_range(ptr)
                     {
                         /* object cache is full */
                         if cache.as_ref().free_count == 0 {
-                            if !(*mgr).is_global_allocator() && (*mgr).partial_counts[idx] == 0 {
-                                (*mgr).next_partial_free[idx] = first_mgr!().next_partial_free[idx];
-                                first_mgr!().next_partial_free[idx] = NonNull::new(mgr);
+                            if !is_global && mgr.partial_counts[idx] == 0 {
+                                mgr.next_partial_free[idx] = first_mgr.next_partial_free[idx];
+                                first_mgr.next_partial_free[idx] = NonNull::new(mgr_ptr);
                             }
-                            (*mgr).partial_counts[idx] += 1;
+                            mgr.partial_counts[idx] += 1;
                         }
                         let cell_ptr = ptr.sub(padding + size_of::<*mut Self>());
                         cache.as_mut().free_obj(cell_ptr);
@@ -377,31 +365,31 @@ unsafe impl GlobalAlloc for CacheManager {
                             *i = None;
 
                             /* insert the manager to free list */
-                            if !(*mgr).is_global_allocator() && (*mgr).is_cache_full() {
-                                (*mgr).next_free = first_mgr!().next_free;
-                                first_mgr!().next_free = NonNull::new(mgr);
+                            if !is_global && mgr.is_cache_full() {
+                                mgr.next_free = first_mgr.next_free;
+                                first_mgr.next_free = NonNull::new(mgr);
                             }
-                            (*mgr).allocated_caches -= 1;
-                            (*mgr).partial_counts[idx] -= 1;
+                            mgr.allocated_caches -= 1;
+                            mgr.partial_counts[idx] -= 1;
 
                             /* free the manager */
-                            if !(*mgr).is_global_allocator()
-                                && (*mgr).allocated_caches == 0
-                                && let Some(mut prev) = (*mgr).prev
-                                && /* do not dealloc the last allocator*/ (*mgr).next.is_some()
+                            if !is_global
+                                && mgr.allocated_caches == 0
+                                && let Some(mut prev) = mgr.prev
+                                && /* do not dealloc the last allocator*/ mgr.next.is_some()
                             {
-                                prev.as_mut().next = (*mgr).next;
+                                prev.as_mut().next = mgr.next;
 
                                 /* delete the manager from free list. */
-                                let mut prev_free = first_mgr!().next_free.unwrap();
+                                let mut prev_free = first_mgr.next_free.unwrap();
                                 while let Some(next) = prev_free.as_ref().next_free
                                     && next.as_ptr() != mgr
                                 {
                                     prev_free = next;
                                 }
-                                prev_free.as_mut().next_free = (*mgr).next_free;
+                                prev_free.as_mut().next_free = mgr.next_free;
 
-                                dealloc(mgr as *mut u8, Layout::new::<Self>());
+                                self.dealloc(mgr_ptr as *mut u8, Layout::new::<Self>());
                             }
                         }
 
@@ -412,5 +400,35 @@ unsafe impl GlobalAlloc for CacheManager {
                 free_pages!(ptr as usize / PAGE_SIZE, layout.size().div_ceil(PAGE_SIZE));
             }
         }
+    }
+}
+
+#[global_allocator]
+static mut GLOBAL_ALLOCATOR: GlobalAllocator = {
+    GlobalAllocator {
+        inner: Mutex::new(CacheManager {
+            caches: [None; CACHE_NUM],
+            next: None,
+            prev: None,
+            next_partial_free: [None; SIZE_CLASS_COUNT],
+            partial_counts: [0; SIZE_CLASS_COUNT],
+            next_free: None,
+            allocated_caches: 0,
+            is_init: false,
+        }),
+    }
+};
+
+#[repr(transparent)]
+pub struct GlobalAllocator {
+    inner: Mutex<CacheManager>,
+}
+
+unsafe impl GlobalAlloc for GlobalAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe { self.inner.lock().alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { self.inner.lock().dealloc(ptr, layout) };
     }
 }
