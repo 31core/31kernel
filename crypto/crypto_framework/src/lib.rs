@@ -2,7 +2,7 @@
 
 pub trait BlockCipher {
     /** block size in bytes */
-    const BLOKC_SIZE: usize;
+    const BLOCK_SIZE: usize;
     /** key size in bytes */
     const KEY_SIZE: usize;
     fn set_key(&mut self, key: &[u8]);

@@ -5,6 +5,10 @@ use crypto_framework::BlockCipher;
 const AES_BLOCK_SIZE: usize = 16;
 const AES128_KEY_SIZE: usize = 16;
 const AES128_ROUND: usize = 10;
+
+const AES256_KEY_SIZE: usize = 32;
+const AES256_ROUND: usize = 14;
+
 const SBOX: [u8; 256] = [
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
     0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
@@ -149,109 +153,115 @@ const MUL_14: [u8; 256] = [
     0x37, 0x39, 0x2b, 0x25, 0x0f, 0x01, 0x13, 0x1d, 0x47, 0x49, 0x5b, 0x55, 0x7f, 0x71, 0x63, 0x6d,
     0xd7, 0xd9, 0xcb, 0xc5, 0xef, 0xe1, 0xf3, 0xfd, 0xa7, 0xa9, 0xbb, 0xb5, 0x9f, 0x91, 0x83, 0x8d,
 ];
-const RC: [u8; 10] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36];
+const RC: [u8; 15] = [
+    0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a,
+];
 
-macro_rules! add_round_key {
-    ($array:expr, $round_key:expr) => {
-        for i in 0..AES_BLOCK_SIZE {
-            $array[i] ^= $round_key[i];
-        }
-    };
+/* Put 16-bytes into a 4x4 array. */
+#[inline(always)]
+fn block_to_array(array: &mut [u8], block: &[u8]) {
+    for (i, byte) in block.iter().enumerate().take(AES_BLOCK_SIZE) {
+        let col = i / 4;
+        let row = i % 4;
+        array[4 * row + col] = *byte;
+    }
 }
 
-macro_rules! sub_bytes {
-    ($array:expr) => {
-        for i in 0..AES_BLOCK_SIZE {
-            $array[i] = SBOX[$array[i] as usize];
-        }
-    };
+#[inline(always)]
+fn array_to_block(block: &mut [u8], array: &[u8]) {
+    for (i, byte) in block.iter_mut().enumerate().take(AES_BLOCK_SIZE) {
+        let col = i / 4;
+        let row = i % 4;
+        *byte = array[4 * row + col];
+    }
 }
 
-macro_rules! sub_bytes_inv {
-    ($array:expr) => {
-        for i in 0..AES_BLOCK_SIZE {
-            $array[i] = SBOX_INV[$array[i] as usize];
-        }
-    };
+#[inline(always)]
+fn add_round_key(array: &mut [u8], round_key: &[u8]) {
+    for i in 0..AES_BLOCK_SIZE {
+        array[i] ^= round_key[i];
+    }
 }
 
-macro_rules! shift_rows {
-    ($array:expr) => {
-        for row in 1..4 {
-            $array[4 * row..4 * row + row].reverse();
-            $array[4 * row + row..4 * (row + 1)].reverse();
-            $array[4 * row..4 * (row + 1)].reverse();
-        }
-    };
+#[inline(always)]
+fn sub_bytes(array: &mut [u8]) {
+    for i in 0..AES_BLOCK_SIZE {
+        array[i] = SBOX[array[i] as usize];
+    }
 }
 
-macro_rules! shift_rows_inv {
-    ($array:expr) => {
-        for row in 1..4 {
-            $array[4 * row..4 * row + (4 - row)].reverse();
-            $array[4 * row + (4 - row)..4 * (row + 1)].reverse();
-            $array[4 * row..4 * (row + 1)].reverse();
-        }
-    };
+#[inline(always)]
+fn sub_bytes_inv(array: &mut [u8]) {
+    for i in 0..AES_BLOCK_SIZE {
+        array[i] = SBOX_INV[array[i] as usize];
+    }
 }
 
-macro_rules! mix_columns {
-    ($array:expr) => {
-        for col in 0..4 {
-            let mut a = [0; 4];
-            for c in 0..4 {
-                a[c] = $array[4 * c + col];
-            }
-            $array[col] = MUL_2[a[0] as usize] ^ a[3] ^ a[2] ^ MUL_3[a[1] as usize];
-            $array[4 + col] = MUL_2[a[1] as usize] ^ a[0] ^ a[3] ^ MUL_3[a[2] as usize];
-            $array[8 + col] = MUL_2[a[2] as usize] ^ a[1] ^ a[0] ^ MUL_3[a[3] as usize];
-            $array[12 + col] = MUL_2[a[3] as usize] ^ a[2] ^ a[1] ^ MUL_3[a[0] as usize];
-        }
-    };
+#[inline(always)]
+fn shift_rows(array: &mut [u8]) {
+    for row in 1..4 {
+        array[4 * row..4 * (row + 1)].rotate_left(row);
+    }
 }
 
-macro_rules! mix_columns_inv {
-    ($array:expr) => {
-        for col in 0..4 {
-            let mut a = [0; 4];
-            for c in 0..4 {
-                a[c] = $array[4 * c + col];
-            }
-            $array[col] = MUL_9[a[3] as usize]
-                ^ MUL_11[a[1] as usize]
-                ^ MUL_13[a[2] as usize]
-                ^ MUL_14[a[0] as usize];
-            $array[4 + col] = MUL_9[a[0] as usize]
-                ^ MUL_11[a[2] as usize]
-                ^ MUL_13[a[3] as usize]
-                ^ MUL_14[a[1] as usize];
-            $array[8 + col] = MUL_9[a[1] as usize]
-                ^ MUL_11[a[3] as usize]
-                ^ MUL_13[a[0] as usize]
-                ^ MUL_14[a[2] as usize];
-            $array[12 + col] = MUL_9[a[2] as usize]
-                ^ MUL_11[a[0] as usize]
-                ^ MUL_13[a[1] as usize]
-                ^ MUL_14[a[3] as usize];
+#[inline(always)]
+fn shift_rows_inv(array: &mut [u8]) {
+    for row in 1..4 {
+        array[4 * row..4 * (row + 1)].rotate_right(row);
+    }
+}
+
+#[inline(always)]
+fn mix_columns(array: &mut [u8]) {
+    for col in 0..4 {
+        let mut a = [0; 4];
+        for c in 0..4 {
+            a[c] = array[4 * c + col];
         }
-    };
+        array[col] = MUL_2[a[0] as usize] ^ a[3] ^ a[2] ^ MUL_3[a[1] as usize];
+        array[4 + col] = MUL_2[a[1] as usize] ^ a[0] ^ a[3] ^ MUL_3[a[2] as usize];
+        array[8 + col] = MUL_2[a[2] as usize] ^ a[1] ^ a[0] ^ MUL_3[a[3] as usize];
+        array[12 + col] = MUL_2[a[3] as usize] ^ a[2] ^ a[1] ^ MUL_3[a[0] as usize];
+    }
+}
+
+#[inline(always)]
+fn mix_columns_inv(array: &mut [u8]) {
+    for col in 0..4 {
+        let mut a = [0; 4];
+        for c in 0..4 {
+            a[c] = array[4 * c + col];
+        }
+        array[col] = MUL_9[a[3] as usize]
+            ^ MUL_11[a[1] as usize]
+            ^ MUL_13[a[2] as usize]
+            ^ MUL_14[a[0] as usize];
+        array[4 + col] = MUL_9[a[0] as usize]
+            ^ MUL_11[a[2] as usize]
+            ^ MUL_13[a[3] as usize]
+            ^ MUL_14[a[1] as usize];
+        array[8 + col] = MUL_9[a[1] as usize]
+            ^ MUL_11[a[3] as usize]
+            ^ MUL_13[a[0] as usize]
+            ^ MUL_14[a[2] as usize];
+        array[12 + col] = MUL_9[a[2] as usize]
+            ^ MUL_11[a[0] as usize]
+            ^ MUL_13[a[1] as usize]
+            ^ MUL_14[a[3] as usize];
+    }
 }
 
 #[derive(Default)]
 pub struct Aes128 {
-    key: [u8; AES128_KEY_SIZE],
-    round_keys: [[u8; AES128_KEY_SIZE]; AES128_ROUND],
+    key: [u8; AES_BLOCK_SIZE],
+    round_keys: [[u8; AES_BLOCK_SIZE]; AES128_ROUND],
 }
 
 impl BlockCipher for Aes128 {
-    const BLOKC_SIZE: usize = AES_BLOCK_SIZE;
+    const BLOCK_SIZE: usize = AES_BLOCK_SIZE;
     const KEY_SIZE: usize = AES128_KEY_SIZE;
     fn set_key(&mut self, key: &[u8]) {
-        for (i, byte) in key.iter().enumerate().take(AES_BLOCK_SIZE) {
-            let col = i / 4;
-            let row = i % 4;
-            self.key[4 * row + col] = *byte;
-        }
+        block_to_array(&mut self.key, key);
 
         for (round, rc) in RC.iter().enumerate().take(AES128_ROUND) {
             for row in 0..4 {
@@ -284,26 +294,19 @@ impl BlockCipher for Aes128 {
     }
     fn block_encrypt(&self, block: &mut [u8]) {
         let mut array = [0; AES_BLOCK_SIZE];
-        for (i, byte) in block.iter().enumerate().take(AES_BLOCK_SIZE) {
-            let col = i / 4;
-            let row = i % 4;
-            array[4 * row + col] = *byte ^ self.key[4 * row + col];
-        }
+        block_to_array(&mut array, block);
+        add_round_key(&mut array, &self.key);
 
         for round in 0..AES128_ROUND {
-            sub_bytes!(array);
-            shift_rows!(array);
+            sub_bytes(&mut array);
+            shift_rows(&mut array);
             if round < AES128_ROUND - 1 {
-                mix_columns!(array);
+                mix_columns(&mut array);
             }
-            add_round_key!(array, self.round_keys[round]);
+            add_round_key(&mut array, &self.round_keys[round]);
         }
 
-        for (i, byte) in block.iter_mut().enumerate().take(AES_BLOCK_SIZE) {
-            let col = i / 4;
-            let row = i % 4;
-            *byte = array[4 * row + col];
-        }
+        array_to_block(block, &array);
     }
     fn block_decrypt(&self, block: &mut [u8]) {
         let mut array = [0; AES_BLOCK_SIZE];
@@ -314,18 +317,105 @@ impl BlockCipher for Aes128 {
         }
 
         for round in (0..AES128_ROUND).rev() {
-            add_round_key!(array, self.round_keys[round]);
+            add_round_key(&mut array, &self.round_keys[round]);
             if round < AES128_ROUND - 1 {
-                mix_columns_inv!(array);
+                mix_columns_inv(&mut array);
             }
-            shift_rows_inv!(array);
-            sub_bytes_inv!(array);
+            shift_rows_inv(&mut array);
+            sub_bytes_inv(&mut array);
         }
 
-        for (i, byte) in block.iter_mut().enumerate().take(AES_BLOCK_SIZE) {
+        array_to_block(block, &array);
+    }
+}
+
+#[derive(Default)]
+pub struct Aes256 {
+    key: [u8; AES_BLOCK_SIZE],
+    round_keys: [[u8; AES_BLOCK_SIZE]; AES256_ROUND],
+}
+
+impl BlockCipher for Aes256 {
+    const BLOCK_SIZE: usize = AES_BLOCK_SIZE;
+    const KEY_SIZE: usize = AES256_KEY_SIZE;
+    fn set_key(&mut self, key: &[u8]) {
+        block_to_array(&mut self.key, &key[..AES_BLOCK_SIZE]);
+        block_to_array(&mut self.round_keys[0], &key[AES_BLOCK_SIZE..]);
+
+        for round in 1..AES256_ROUND {
+            for row in 0..4 {
+                /* w[i-Nk] */
+                let previous_key = if round == 1 {
+                    &self.key
+                } else {
+                    &self.round_keys[round - 2]
+                };
+                /* w[i-1] */
+                let w_1 = if round == 0 {
+                    &self.key[AES_BLOCK_SIZE..]
+                } else {
+                    &self.round_keys[round - 1]
+                };
+
+                let rc = if row == 0 { RC[round / 2] } else { 0 };
+
+                if round % 2 == 1 {
+                    self.round_keys[round][4 * row] = rc
+                        ^ SBOX[w_1[4 * ((row + 1) % 4 + 1) - 1] as usize]
+                        ^ previous_key[4 * row];
+                } else {
+                    self.round_keys[round][4 * row] =
+                        SBOX[w_1[4 * row + 3] as usize] ^ previous_key[4 * row];
+                }
+            }
+
+            for col in 1..4 {
+                for row in 0..4 {
+                    let previous_key = if round == 1 {
+                        &self.key
+                    } else {
+                        &self.round_keys[round - 2]
+                    };
+
+                    self.round_keys[round][4 * row + col] =
+                        previous_key[4 * row + col] ^ self.round_keys[round][4 * row + col - 1];
+                }
+            }
+        }
+    }
+    fn block_encrypt(&self, block: &mut [u8]) {
+        let mut array = [0; AES_BLOCK_SIZE];
+        block_to_array(&mut array, block);
+        add_round_key(&mut array, &self.key);
+
+        for round in 0..AES256_ROUND {
+            sub_bytes(&mut array);
+            shift_rows(&mut array);
+            if round < AES256_ROUND - 1 {
+                mix_columns(&mut array);
+            }
+            add_round_key(&mut array, &self.round_keys[round]);
+        }
+
+        array_to_block(block, &array);
+    }
+    fn block_decrypt(&self, block: &mut [u8]) {
+        let mut array = [0; AES_BLOCK_SIZE];
+        for (i, byte) in block.iter().enumerate().take(AES_BLOCK_SIZE) {
             let col = i / 4;
             let row = i % 4;
-            *byte = array[4 * row + col] ^ self.key[4 * row + col];
+            array[4 * row + col] = *byte;
         }
+
+        for round in (0..AES256_ROUND).rev() {
+            add_round_key(&mut array, &self.round_keys[round]);
+            if round < AES256_ROUND - 1 {
+                mix_columns_inv(&mut array);
+            }
+            shift_rows_inv(&mut array);
+            sub_bytes_inv(&mut array);
+        }
+
+        array_to_block(block, &array);
     }
 }
