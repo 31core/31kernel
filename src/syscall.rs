@@ -8,3 +8,4 @@ pub const SYSCALL_READ: u64 = 2;
 pub const SYSCALL_WRITE: u64 = 3;
 pub const SYSCALL_LSEEK: u64 = 4;
 pub const SYSCALL_CLOSE: u64 = 5;
+pub const SYSCALL_SLEEP: u64 = 6;

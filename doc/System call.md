@@ -25,6 +25,7 @@
 
 ## syscall table
 
-|ID|Name|Argument 0|Argument 1|Argument 2|Argument 3|Return value|
-|--|----|----------|----------|----------|----------|------------|
-|0 |exit|Exit code |-         |-         |-         |-           |
+|ID |Name |Argument 0|Argument 1|Argument 2|Argument 3|Return value|
+|---|-----|----------|----------|----------|----------|------------|
+|0  |exit |Exit code |-         |-         |-         |-           |
+|6  |sleep|Timestamp |-         |-         |-         |-           |

@@ -99,6 +99,7 @@ where
             context,
             page_allocs,
             stack,
+            next_schedule: None,
         };
         self.tasks.insert(pid, task);
         let (min_vruntime, _) = self.vruntime.first().unwrap();
@@ -116,11 +117,23 @@ where
      * Do task schedule, and return the next task.
      */
     pub fn schedule(&mut self) -> &Task<P> {
-        let (mut vruntime, pid) = self.vruntime.pop_first().unwrap();
-        let task = self.tasks.get(&pid).unwrap();
-        vruntime += (task.nice + NICE_MAX) as usize; // higher nice -> larger vruntime
-        self.vruntime.insert((vruntime, pid));
-        self.current_pid = pid;
+        loop {
+            let (mut vruntime, pid) = self.vruntime.pop_first().unwrap();
+            let task = self.tasks.get(&pid).unwrap();
+            vruntime += (task.nice + NICE_MAX) as usize; // higher nice -> larger vruntime
+            self.vruntime.insert((vruntime, pid));
+            self.current_pid = pid;
+
+            match self.current_task().next_schedule {
+                Some(next_schedule) => {
+                    if next_schedule <= crate::time::get_sys_time() {
+                        self.current_task_mut().next_schedule = None;
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
 
         self.current_task()
     }
@@ -161,6 +174,8 @@ where
     page_allocs: Vec<(usize, usize)>,
     /** User stack bottom address */
     stack: usize,
+    /** Minimum timestamp for next schedule, set by `sleep` syscall */
+    pub next_schedule: Option<u64>,
 }
 
 unsafe impl<P> Sync for Task<P> where P: Paging + Send {}
@@ -216,6 +231,7 @@ pub fn task_init() {
         context: Context::default(),
         page_allocs: Vec::default(),
         stack: 0,
+        next_schedule: None,
     };
 
     let mut tasks = BTreeMap::new();
@@ -246,6 +262,7 @@ pub unsafe fn kernel_fork() {
             context: Context::default(),
             page_allocs: Vec::default(),
             stack: 0,
+            next_schedule: None,
         };
         scheduler.tasks.insert(new_task.pid, new_task);
         scheduler.max_pid += 1;

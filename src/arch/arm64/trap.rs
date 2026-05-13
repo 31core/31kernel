@@ -11,6 +11,10 @@ use core::arch::{asm, global_asm};
 
 global_asm!(include_str!("trap.S"));
 
+const ESR_EC_OFFSET: u64 = 26;
+const ESR_EC_MASK: u64 = 0b111111;
+const ESR_EC_SVC64: u64 = 0x15;
+
 /** switch to kernel page table */
 unsafe fn to_kernel_pt() {
     let tbbrx_el1 = unsafe { (*(&raw mut KERNEL_PT)).assume_init() as u64 };
@@ -42,8 +46,14 @@ pub unsafe fn kill_task(ctx: *mut Context) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn el1_sync_trap_handler(ctx: *mut Context) {
     unsafe {
+        let esr_el1: u64;
+        asm!("mrs {}, ESR_EL1", out(reg) esr_el1);
+
         to_kernel_pt();
-        super::syscall::syscall(ctx)
+        let ec = (esr_el1 >> ESR_EC_OFFSET) & ESR_EC_MASK;
+        if ec == ESR_EC_SVC64 {
+            super::syscall::syscall(ctx);
+        }
     };
 }
 
