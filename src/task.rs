@@ -1,3 +1,7 @@
+/*!
+ * Multi-tasking structures, including task scheduler, task structure.
+ */
+
 use crate::{alloc_pages, free_pages};
 use crate::{
     arch::{Context, PageMapper},
@@ -7,6 +11,7 @@ use crate::{
 };
 use alloc::{
     collections::{BTreeMap, BTreeSet},
+    sync::Arc,
     vec::Vec,
 };
 use core::mem::MaybeUninit;
@@ -51,7 +56,7 @@ where
                 let v_pages = prog.p_memsz.div_ceil(PAGE_SIZE);
 
                 let p_page = unsafe { vpn_to_ppn(alloc_pages!(v_pages)) };
-                page_allocs.push((ppn_to_vpn(p_page), v_pages));
+                page_allocs.push(Arc::new((v_page, p_page, v_pages, prog.p_flags.to_vec())));
                 if prog.p_flags.contains(&PFlags::Exec) {
                     unsafe { page.map_text_u(v_page, p_page, v_pages) };
                 } else if prog.p_flags.contains(&PFlags::Write) {
@@ -140,6 +145,7 @@ where
     pub fn kill(&mut self, pid: usize) {
         self.tasks.remove(&pid);
         self.vruntime.retain(|(_, this_pid)| *this_pid != pid);
+        self.schedule();
     }
     /**
      * Schedule, store context of current task, and set the context for the next task,
@@ -153,12 +159,81 @@ where
 
         next_task
     }
+    /** Fork current task. */
+    pub fn fork(&mut self) -> usize {
+        self.max_pid += 1;
+        let pid = self.max_pid;
+        let stack = unsafe { alloc_pages!(USER_STACK_PAGES) };
+        let mut page = unsafe { P::new() };
+        unsafe {
+            page.map_kernel_region();
+            page.map_data(self.trap_stack, vpn_to_ppn(self.trap_stack), 16);
+            page.map_data_u(
+                self.current_task().stack,
+                vpn_to_ppn(stack),
+                USER_STACK_PAGES,
+            );
+
+            core::ptr::copy(
+                (self.current_task().stack * PAGE_SIZE) as *const u8,
+                (stack * PAGE_SIZE) as *mut u8,
+                USER_STACK_PAGES * PAGE_SIZE,
+            );
+        }
+        let mut page_allocs = Vec::new();
+
+        for alloc in &self.current_task().page_allocs {
+            let (v_page, p_page, v_pages, flags) = alloc.as_ref();
+
+            if flags.contains(&PFlags::Exec) {
+                unsafe { page.map_text_u(*v_page, *p_page, *v_pages) };
+                page_allocs.push(Arc::clone(alloc));
+            } else if flags.contains(&PFlags::Write) {
+                let p_page = unsafe { vpn_to_ppn(alloc_pages!(*v_pages)) };
+                page_allocs.push(Arc::new((
+                    *v_page,
+                    ppn_to_vpn(p_page),
+                    *v_pages,
+                    flags.clone(),
+                )));
+                unsafe {
+                    page.map_data_u(*v_page, p_page, *v_pages);
+                    core::ptr::copy(
+                        (*v_page * PAGE_SIZE) as *const u8,
+                        (ppn_to_vpn(p_page) * PAGE_SIZE) as *mut u8,
+                        *v_pages * PAGE_SIZE,
+                    );
+                }
+            } else {
+                unsafe { page.map_rodata_u(*v_page, *p_page, *v_pages) };
+                page_allocs.push(Arc::clone(alloc));
+            }
+        }
+        let child = Task {
+            uid: self.current_task().uid,
+            pid,
+            ppid: self.current_task().pid,
+            page,
+            nice: self.current_task().nice,
+            context: self.current_task().context.clone(),
+            page_allocs,
+            stack,
+            next_schedule: None,
+        };
+        self.tasks.insert(pid, child);
+        let (min_vruntime, _) = self.vruntime.first().unwrap();
+        self.vruntime.insert((*min_vruntime, pid));
+
+        pid
+    }
 }
 
 pub const KERNEL_PID: usize = 0;
 const NICE_DEFAULT: isize = 0;
 const NICE_MAX: isize = 19;
 const NICE_MIN: isize = -20;
+
+type PageAllocInfo = Arc<(usize, usize, usize, Vec<PFlags>)>; // (v_page, p_page, v_pages, flags)
 
 pub struct Task<P>
 where
@@ -171,7 +246,7 @@ where
     pub nice: isize,
     pub context: Context,
     /** Track pages allocations */
-    page_allocs: Vec<(usize, usize)>,
+    page_allocs: Vec<PageAllocInfo>,
     /** User stack bottom address */
     stack: usize,
     /** Minimum timestamp for next schedule, set by `sleep` syscall */
@@ -200,8 +275,11 @@ where
             self.page.destroy();
             free_pages!(self.stack, USER_STACK_PAGES);
         }
-        for (page_num, page_count) in &self.page_allocs {
-            unsafe { free_pages!(*page_num, *page_count) };
+        for alloc in &mut self.page_allocs {
+            let (_vpage, p_page, page_count, _flags) = alloc.as_ref();
+            if Arc::strong_count(alloc) == 1 {
+                unsafe { free_pages!(ppn_to_vpn(*p_page), *page_count) };
+            }
         }
     }
 }

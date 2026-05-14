@@ -22,7 +22,7 @@ macro_rules! printk_error {
         #[allow(unused_unsafe)]
         #[allow(clippy::macro_metavars_in_unsafe)]
         unsafe {
-            lock_uinit!($crate::kmsg::KMSG).error(&alloc::format!($($arg)*));
+            $crate::lock_uinit!($crate::kmsg::KMSG).error(&alloc::format!($($arg)*));
         }
     };
 }
@@ -33,7 +33,7 @@ macro_rules! printk_warning {
         #[allow(unused_unsafe)]
         #[allow(clippy::macro_metavars_in_unsafe)]
         unsafe {
-            lock_uinit!($crate::kmsg::KMSG).warning(&alloc::format!($($arg)*));
+            $crate::lock_uinit!($crate::kmsg::KMSG).warning(&alloc::format!($($arg)*));
         }
     };
 }
@@ -44,7 +44,7 @@ macro_rules! printk {
         #[allow(unused_unsafe)]
         #[allow(clippy::macro_metavars_in_unsafe)]
         unsafe {
-            lock_uinit!($crate::kmsg::KMSG).debug(&alloc::format!($($arg)*));
+            $crate::lock_uinit!($crate::kmsg::KMSG).debug(&alloc::format!($($arg)*));
         }
     };
 }

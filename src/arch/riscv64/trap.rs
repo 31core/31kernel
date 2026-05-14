@@ -19,6 +19,14 @@ const SCAUSE_TIMER_S: u64 = 5 | INTERRUPT_FLAG;
 const SCAUSE_ECALL_U: u64 = 8;
 const SCAUSE_ECALL_S: u64 = 9;
 
+pub(super) fn switch_privilege_level(next_pid: usize) {
+    if next_pid != KERNEL_PID {
+        unsafe { asm!("csrc sstatus, {}", in(reg) 1 << 8) }; // set SPP to user mode
+    } else {
+        unsafe { asm!("csrs sstatus, {}", in(reg) 1 << 8) }; // set SPP to supervisor mode
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mtrap_handler(ctx: &mut Context) -> &mut Context {
     let mut mcause: u64;
@@ -50,16 +58,10 @@ pub unsafe fn kill_task(ctx: *mut Context) {
     let scheduler = unsafe { scheduler_guard.assume_init_mut() };
     let current_pid = scheduler.current_task().pid;
     scheduler.kill(current_pid);
-    scheduler.schedule();
     let next_task = scheduler.current_task();
     let next_ctx = next_task.context.clone();
     unsafe { ctx.write(next_ctx) };
-
-    if next_task.pid != KERNEL_PID {
-        unsafe { asm!("csrc sstatus, {}", in(reg) 1 << 8) }; // set SPP to user mode
-    } else {
-        unsafe { asm!("csrs sstatus, {}", in(reg) 1 << 8) }; // set SPP to supervisor mode
-    }
+    switch_privilege_level(next_task.pid);
 
     unsafe {
         next_task.page.switch_to();
@@ -89,11 +91,7 @@ pub unsafe extern "C" fn strap_handler(ctx: *mut Context) {
         let mut scheduler_guard = SCHEDULER.lock();
         let scheduler = unsafe { scheduler_guard.assume_init_mut() };
         let next_task = scheduler.switch_task(ctx);
-        if next_task.pid != KERNEL_PID {
-            unsafe { asm!("csrc sstatus, {}", in(reg) 1 << 8) }; // set SPP to user mode
-        } else {
-            unsafe { asm!("csrs sstatus, {}", in(reg) 1 << 8) }; // set SPP to supervisor mode
-        }
+        switch_privilege_level(next_task.pid);
 
         unsafe {
             next_task.page.switch_to();

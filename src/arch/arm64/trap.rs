@@ -29,7 +29,6 @@ pub unsafe fn kill_task(ctx: *mut Context) {
     let scheduler = unsafe { scheduler_guard.assume_init_mut() };
     let current_pid = scheduler.current_task().pid;
     scheduler.kill(current_pid);
-    scheduler.schedule();
     let next_task = scheduler.current_task();
     let next_ctx = next_task.context.clone();
     unsafe { ctx.write(next_ctx) };

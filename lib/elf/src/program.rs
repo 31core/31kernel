@@ -14,7 +14,7 @@ pub enum Type {
     Note,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Flags {
     Exec,
     Write,
