@@ -9,6 +9,9 @@ const TCR_TG1_4KB: u64 = 2 << 30;
 const TCR_IRGN1: u64 = 0x01 << 24;
 const TCR_ORGN1: u64 = 0x01 << 26;
 
+const MAIR_NORMAL_WB: u64 = 0xff;
+const MAIR_ATTR0_OFF: u64 = 0;
+
 pub(super) fn set_timer() {
     let freq: u64;
     unsafe {
@@ -33,6 +36,9 @@ pub unsafe fn cpu_init() {
             | TCR_IRGN1
             | TCR_ORGN1;
         asm!("msr TCR_EL1, {}", in(reg) tcr);
+
+        let mair: u64 = MAIR_NORMAL_WB << MAIR_ATTR0_OFF;
+        asm!("msr MAIR_EL1, {}", in(reg) mair);
 
         asm!("msr VBAR_EL1, {}", "isb", in(reg) addr_of!(VECTOR_TABLE));
 
