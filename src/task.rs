@@ -264,6 +264,9 @@ where
             self.nice = nice;
         }
     }
+    pub fn is_kernel(&self) -> bool {
+        self.pid == KERNEL_PID
+    }
 }
 
 impl<P> Drop for Task<P>

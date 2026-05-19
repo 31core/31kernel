@@ -45,10 +45,10 @@ pub fn set_timer(interval: u64) {
 
 #[inline(always)]
 pub unsafe fn enable_interrupts() {
-    unsafe { sstatus_w(sstatus_r() | 2) }; // set SIE flag
+    unsafe { asm!("csrs sstatus, 2") }; // set SIE flag
 }
 
 #[inline(always)]
 pub unsafe fn disable_interrupts() {
-    unsafe { sstatus_w(sstatus_r() & !2) }; // unset SIE flag
+    unsafe { asm!("csrc sstatus, 2") }; // unset SIE flag
 }

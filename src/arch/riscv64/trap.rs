@@ -2,7 +2,7 @@ use super::cpu::Context;
 use crate::{
     arch::riscv64::{page::MODE_SV39, *},
     page::{KERNEL_PT, Paging},
-    task::{KERNEL_PID, SCHEDULER},
+    task::{SCHEDULER, Scheduler, Task},
 };
 use core::arch::{asm, global_asm};
 
@@ -19,8 +19,11 @@ const SCAUSE_TIMER_S: u64 = 5 | INTERRUPT_FLAG;
 const SCAUSE_ECALL_U: u64 = 8;
 const SCAUSE_ECALL_S: u64 = 9;
 
-pub(super) fn switch_privilege_level(next_pid: usize) {
-    if next_pid != KERNEL_PID {
+pub(super) fn switch_privilege_level<P>(next_task: &Task<P>)
+where
+    P: Paging + Send,
+{
+    if !next_task.is_kernel() {
         unsafe { asm!("csrc sstatus, {}", in(reg) 1 << 8) }; // set SPP to user mode
     } else {
         unsafe { asm!("csrs sstatus, {}", in(reg) 1 << 8) }; // set SPP to supervisor mode
@@ -53,15 +56,17 @@ unsafe fn to_kernel_pt() {
  * * Set up the next task's conext.
  * * Switch to the next task's page table.
  */
-pub unsafe fn kill_task(ctx: *mut Context) {
-    let mut scheduler_guard = SCHEDULER.lock();
-    let scheduler = unsafe { scheduler_guard.assume_init_mut() };
+pub unsafe fn kill_task<P>(scheduler: &mut Scheduler<P>, ctx: *mut Context)
+where
+    P: Paging + Send,
+{
     let current_pid = scheduler.current_task().pid;
     scheduler.kill(current_pid);
+
     let next_task = scheduler.current_task();
     let next_ctx = next_task.context.clone();
     unsafe { ctx.write(next_ctx) };
-    switch_privilege_level(next_task.pid);
+    super::trap::switch_privilege_level(next_task);
 
     unsafe {
         next_task.page.switch_to();
@@ -91,16 +96,18 @@ pub unsafe extern "C" fn strap_handler(ctx: *mut Context) {
         let mut scheduler_guard = SCHEDULER.lock();
         let scheduler = unsafe { scheduler_guard.assume_init_mut() };
         let next_task = scheduler.switch_task(ctx);
-        switch_privilege_level(next_task.pid);
+        switch_privilege_level(next_task);
 
         unsafe {
             next_task.page.switch_to();
             asm!("sfence.vma");
         }
     } else if scause == SCAUSE_ILLEGAL_INS {
+        let mut scheduler_guard = SCHEDULER.lock();
+        let scheduler = unsafe { scheduler_guard.assume_init_mut() };
         unsafe {
             to_kernel_pt();
-            kill_task(ctx);
+            kill_task(scheduler, ctx);
         }
     }
 }

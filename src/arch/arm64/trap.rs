@@ -1,11 +1,11 @@
 use super::{
     cpu::{Context, set_timer},
-    page::{refresh_tlb, set_ttbrx},
+    page::{PageMapper, refresh_tlb, set_ttbrx},
 };
 use crate::{
     arch::arm64::gic::*,
     page::{KERNEL_PT, Paging},
-    task::{KERNEL_PID, SCHEDULER},
+    task::{SCHEDULER, Scheduler},
 };
 use core::arch::{asm, global_asm};
 
@@ -24,15 +24,14 @@ unsafe fn to_kernel_pt() {
     }
 }
 
-pub unsafe fn kill_task(ctx: *mut Context) {
-    let mut scheduler_guard = SCHEDULER.lock();
-    let scheduler = unsafe { scheduler_guard.assume_init_mut() };
+pub unsafe fn kill_task(scheduler: &mut Scheduler<PageMapper>, ctx: *mut Context) {
     let current_pid = scheduler.current_task().pid;
     scheduler.kill(current_pid);
+
     let next_task = scheduler.current_task();
     let next_ctx = next_task.context.clone();
     unsafe { ctx.write(next_ctx) };
-    if next_task.pid != KERNEL_PID {
+    if !next_task.is_kernel() {
         unsafe { asm!("msr SP_EL0, {}", in(reg) (*ctx).sp) };
     }
 
@@ -87,12 +86,12 @@ pub unsafe extern "C" fn el1_irq_trap_handler(ctx: *mut Context) {
 fn task_switch(ctx: *mut Context) {
     let mut scheduler_guard = SCHEDULER.lock();
     let scheduler = unsafe { scheduler_guard.assume_init_mut() };
-    if scheduler.current_task().pid != KERNEL_PID {
+    if !scheduler.current_task().is_kernel() {
         unsafe { asm!("mrs {}, SP_EL0", out(reg)(*ctx).sp) };
     }
 
     let next_task = scheduler.switch_task(ctx);
-    if next_task.pid != KERNEL_PID {
+    if !next_task.is_kernel() {
         unsafe { asm!("msr SP_EL0, {}", in(reg) (*ctx).sp) };
     }
 
