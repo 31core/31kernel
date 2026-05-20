@@ -5,6 +5,7 @@
 use crate::{alloc_pages, free_pages};
 use crate::{
     arch::{Context, PageMapper},
+    buddy_allocator::ceil_to_power_2,
     global::GlobalUninit,
     mutex::Mutex,
     page::{KERNEL_PT, PAGE_SIZE, Paging, ppn_to_vpn, vpn_to_ppn},
@@ -55,7 +56,7 @@ where
                 let v_page = prog.v_addr / PAGE_SIZE;
                 let v_pages = prog.p_memsz.div_ceil(PAGE_SIZE);
 
-                let p_page = unsafe { vpn_to_ppn(alloc_pages!(v_pages)) };
+                let p_page = unsafe { vpn_to_ppn(alloc_pages!(ceil_to_power_2(v_pages))) };
                 page_allocs.push(Arc::new((v_page, p_page, v_pages, prog.p_flags.to_vec())));
                 if prog.p_flags.contains(&PFlags::Exec) {
                     unsafe { page.map_text_u(v_page, p_page, v_pages) };
@@ -189,7 +190,7 @@ where
                 unsafe { page.map_text_u(*v_page, *p_page, *v_pages) };
                 page_allocs.push(Arc::clone(alloc));
             } else if flags.contains(&PFlags::Write) {
-                let p_page = unsafe { vpn_to_ppn(alloc_pages!(*v_pages)) };
+                let p_page = unsafe { vpn_to_ppn(alloc_pages!(ceil_to_power_2(*v_pages))) };
                 page_allocs.push(Arc::new((
                     *v_page,
                     ppn_to_vpn(p_page),
@@ -281,7 +282,7 @@ where
         for alloc in &mut self.page_allocs {
             let (_vpage, p_page, page_count, _flags) = alloc.as_ref();
             if Arc::strong_count(alloc) == 1 {
-                unsafe { free_pages!(ppn_to_vpn(*p_page), *page_count) };
+                unsafe { free_pages!(ppn_to_vpn(*p_page), ceil_to_power_2(*page_count)) };
             }
         }
     }

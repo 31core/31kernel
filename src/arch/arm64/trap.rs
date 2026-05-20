@@ -13,7 +13,13 @@ global_asm!(include_str!("trap.S"));
 
 const ESR_EC_OFFSET: u64 = 26;
 const ESR_EC_MASK: u64 = 0b111111;
+
+const ESR_EC_UNKOWN: u64 = 0x00;
+const ESR_EC_WFI: u64 = 0x01;
 const ESR_EC_SVC64: u64 = 0x15;
+const ESR_EC_TRAPPED_MSR: u64 = 0x18;
+const ESR_EC_INST_ABORT: u64 = 0x20;
+const ESR_EC_DATA_ABORT: u64 = 0x24;
 
 /** switch to kernel page table */
 unsafe fn to_kernel_pt() {
@@ -24,6 +30,12 @@ unsafe fn to_kernel_pt() {
     }
 }
 
+/**
+ * Kill a task, it is called by trap, and it does:
+ * * Remove the task from scheduler.
+ * * Set up the next task's conext.
+ * * Switch to the next task's page table.
+ */
 pub unsafe fn kill_task(scheduler: &mut Scheduler<PageMapper>, ctx: *mut Context) {
     let current_pid = scheduler.current_task().pid;
     scheduler.kill(current_pid);
@@ -51,6 +63,15 @@ pub unsafe extern "C" fn el1_sync_trap_handler(ctx: *mut Context) {
         let ec = (esr_el1 >> ESR_EC_OFFSET) & ESR_EC_MASK;
         if ec == ESR_EC_SVC64 {
             super::syscall::syscall(ctx);
+        } else if ec == ESR_EC_UNKOWN
+            || ec == ESR_EC_WFI
+            || ec == ESR_EC_TRAPPED_MSR
+            || ec == ESR_EC_INST_ABORT
+            || ec == ESR_EC_DATA_ABORT
+        {
+            let mut scheduler_guard = SCHEDULER.lock();
+            let scheduler = scheduler_guard.assume_init_mut();
+            kill_task(scheduler, ctx);
         }
     };
 }
