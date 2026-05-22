@@ -1,7 +1,7 @@
 /*! Virtual File System */
 
 use crate::{devfs::DevFS, global::GlobalUninit, mutex::Mutex};
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 use core::{mem::MaybeUninit, result::Result};
 
 pub type Path = [String];
@@ -18,19 +18,27 @@ pub fn vfs_init() {
     }
 }
 
+#[derive(Debug)]
+pub struct VfsFile {
+    pub fd: File,
+    pub fs_id: usize,
+}
+
 #[derive(Default)]
 pub struct VirtualFileSystem {
-    pub mount_points: Vec<Vec<String>>,
-    pub mounted_fs: Vec<Box<dyn FileSystem>>,
+    max_id: usize,
+    pub mount_points: BTreeMap<usize, Vec<String>>,
+    pub mounted_fs: BTreeMap<usize, Box<dyn FileSystem>>,
 }
 
 unsafe impl Send for VirtualFileSystem {}
 
 impl VirtualFileSystem {
-    pub fn open(&mut self, path: &Path) -> Result<File, ()> {
-        let mut fs = None;
+    pub fn open(&mut self, path: &Path) -> Result<VfsFile, ()> {
+        let mut found_fs = None;
         let mut found_mountpoint_depth = 0;
-        'main: for (p, point) in self.mount_points.iter().enumerate() {
+        let mut found_fs_id = 0;
+        'main: for (fs_id, point) in self.mount_points.iter() {
             for (i, entry) in point.iter().enumerate() {
                 if i > path.len() && path[i] != *entry {
                     continue 'main;
@@ -38,34 +46,70 @@ impl VirtualFileSystem {
             }
 
             if point.len() > found_mountpoint_depth {
-                fs = Some(&mut self.mounted_fs[p]);
+                found_fs_id = *fs_id;
+                found_fs = self.mounted_fs.get_mut(fs_id);
                 found_mountpoint_depth = point.len();
             }
         }
 
-        if let Some(fs) = fs {
-            fs.open(&path[found_mountpoint_depth..])
+        if let Some(fs) = found_fs
+            && let Ok(fd) = fs.open(&path[found_mountpoint_depth..])
+        {
+            Ok(VfsFile {
+                fd,
+                fs_id: found_fs_id,
+            })
         } else {
             Err(())
         }
     }
     pub fn mount(&mut self, fs: Box<dyn FileSystem>, mount_point: &Path) {
-        self.mounted_fs.push(fs);
-        self.mount_points.push(mount_point.to_vec());
+        self.mounted_fs.insert(self.max_id, fs);
+        self.mount_points.insert(self.max_id, mount_point.to_vec());
+        self.max_id += 1;
     }
     pub fn umount(&mut self, mount_point: &Path) {
-        'main: for (i, mpoint) in self.mount_points.iter().enumerate() {
-            for (j, entry) in mount_point.iter().enumerate() {
-                if j > mpoint.len() && *entry != mpoint[j] {
+        let mut found_fs_id = None;
+        'main: for (fs_id, mpoint) in self.mount_points.iter() {
+            for (i, entry) in mount_point.iter().enumerate() {
+                if i > mpoint.len() && *entry != mpoint[i] {
                     continue 'main;
                 }
             }
-            self.mount_points.remove(i);
+            found_fs_id = Some(*fs_id);
             break;
         }
+        if let Some(fs_id) = found_fs_id {
+            self.mounted_fs.remove(&fs_id);
+            self.mount_points.remove(&fs_id);
+        }
+    }
+    pub fn get_fs_mut(&mut self, mount_point: &Path) -> Option<&mut Box<dyn FileSystem>> {
+        'main: for (fs_id, mpoint) in self.mount_points.iter() {
+            for (i, entry) in mount_point.iter().enumerate() {
+                if i > mpoint.len() && *entry != mpoint[i] {
+                    continue 'main;
+                }
+            }
+            return self.mounted_fs.get_mut(fs_id);
+        }
+        None
+    }
+    pub fn read(&mut self, fd: &VfsFile, buf: &mut [u8], offset: u64) -> Result<u64, ()> {
+        self.mounted_fs
+            .get_mut(&fd.fs_id)
+            .unwrap()
+            .read(&fd.fd, buf, offset)
+    }
+    pub fn write(&mut self, fd: &VfsFile, buf: &[u8]) -> Result<u64, ()> {
+        self.mounted_fs
+            .get_mut(&fd.fs_id)
+            .unwrap()
+            .write(&fd.fd, buf)
     }
 }
 
+#[derive(Debug)]
 pub enum FileType {
     RegularFile,
     Directory,
@@ -74,6 +118,7 @@ pub enum FileType {
     SymbolLink,
 }
 
+#[derive(Debug)]
 pub struct File {
     pub fd: u64,
     pub r#type: FileType,
@@ -88,4 +133,7 @@ pub trait FileSystem {
     fn rename(&mut self, src: &Path, dst: &Path) -> Result<(), ()>;
     fn close(&mut self, fd: &File) -> Result<(), ()>;
     fn list_dir(&mut self) -> Result<Vec<String>, ()>;
+    fn mknod(&mut self, _path: &Path, _file_type: FileType, _id: (usize, usize)) -> Result<(), ()> {
+        unimplemented!("mknod is not implemented for this filesystem");
+    }
 }

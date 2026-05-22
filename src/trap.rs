@@ -38,4 +38,6 @@ pub unsafe fn trap_stack_init(trap_stack: usize) {
 
         asm!("csrw sscratch, {}", in(reg) (trap_stack + 16) * PAGE_SIZE);
     }
+    #[cfg(target_arch = "aarch64")]
+    let _ = trap_stack;
 }

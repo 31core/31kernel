@@ -20,7 +20,6 @@ mod time;
 mod trap;
 mod vfs;
 
-use alloc::boxed::Box;
 use core::{arch::asm, ptr::addr_of};
 use dtb::{DeviceTree, Node, ParseError, utils::*};
 use page::Paging;
@@ -78,21 +77,45 @@ fn cpu_init() {
 fn soc_init(dtb: &DeviceTree) {
     #[cfg(target_arch = "aarch64")]
     arch::arm64::soc_init(dtb);
+    #[cfg(target_arch = "riscv64")]
+    let _ = dtb;
 }
 
 /** Setup console (serial0) for kmsg output. */
 fn setup_console(dtb: &DeviceTree) {
     fn setup_by_serial0_node(serial0_node: &Node) {
-        use device::uart::{ns16550::NS16550, pl011::PL011};
+        use alloc::{boxed::Box, string::String};
+        use devfs::CHAR_DEV_MAJOR;
+        use device::{
+            DEVICE_MGR,
+            uart::{ns16550::NS16550, pl011::PL011},
+        };
+        use vfs::{FileType, ROOT_VFS};
 
         let mut kmsg_guard = kmsg::KMSG.lock();
         let kmsg = unsafe { kmsg_guard.assume_init_mut() };
+
+        let mut device_mgr_guard = DEVICE_MGR.lock();
+        let device_mgr = unsafe { device_mgr_guard.assume_init_mut() };
+
+        let mut vfs_guard = ROOT_VFS.lock();
+        let vfs = unsafe { vfs_guard.assume_init_mut() };
         if let Some(compatible) = serial0_node.get_property("compatible")
             && check_compatible(compatible, "arm,pl011")
             && let Some(reg) = serial0_node.get_property("reg")
         {
             let regs = parse_reg(reg, serial0_node.address_cells, serial0_node.size_cells);
             kmsg.output_handler = Some(Box::new(PL011(regs[0].0)));
+            let id = device_mgr.register_char_dev(Box::new(PL011(regs[0].0)));
+
+            vfs.get_fs_mut(&[String::from("dev")])
+                .unwrap()
+                .mknod(
+                    &[String::from("tty0")],
+                    FileType::CharDev,
+                    (CHAR_DEV_MAJOR, id),
+                )
+                .unwrap();
         }
         if let Some(compatible) = serial0_node.get_property("compatible")
             && check_compatible(compatible, "ns16550a")
@@ -100,6 +123,16 @@ fn setup_console(dtb: &DeviceTree) {
         {
             let regs = parse_reg(reg, serial0_node.address_cells, serial0_node.size_cells);
             kmsg.output_handler = Some(Box::new(NS16550(regs[0].0)));
+            let id = device_mgr.register_char_dev(Box::new(NS16550(regs[0].0)));
+
+            vfs.get_fs_mut(&[String::from("dev")])
+                .unwrap()
+                .mknod(
+                    &[String::from("tty0")],
+                    FileType::CharDev,
+                    (CHAR_DEV_MAJOR, id),
+                )
+                .unwrap();
         }
         /* map registers */
         if let Some(reg) = serial0_node.get_property("reg") {
@@ -190,6 +223,7 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     task::task_init();
     rand::rand_init();
     vfs::vfs_init();
+    device::device_init();
     if let Ok(dtb) = &dtb {
         setup_console(dtb);
     }

@@ -2,10 +2,13 @@
  * Generic device drivers
  */
 
+use crate::{global::GlobalUninit, mutex::Mutex};
 use alloc::{
+    boxed::Box,
     string::{String, ToString},
     vec::Vec,
 };
+use core::mem::MaybeUninit;
 
 pub mod uart;
 
@@ -28,5 +31,27 @@ pub trait CharDev {
             }
             input.push(c);
         }
+    }
+}
+
+pub static DEVICE_MGR: GlobalUninit<DeviceManager> = Mutex::new(MaybeUninit::uninit());
+
+pub fn device_init() {
+    let mut dev_mgr = DEVICE_MGR.lock();
+    *dev_mgr = MaybeUninit::new(DeviceManager::default());
+}
+
+#[derive(Default)]
+pub struct DeviceManager {
+    pub char_devs: Vec<Box<dyn CharDev>>,
+}
+
+unsafe impl Send for DeviceManager {}
+
+impl DeviceManager {
+    pub fn register_char_dev(&mut self, dev: Box<dyn CharDev>) -> usize {
+        let id = self.char_devs.len();
+        self.char_devs.push(dev);
+        id
     }
 }

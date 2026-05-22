@@ -3,7 +3,9 @@
  */
 
 use crate::{
+    device::DEVICE_MGR,
     kmsg::KMSG,
+    lock_uinit,
     rand::{GLOBAL_RNG, RandomGenerator},
     vfs::{File, FileSystem, FileType, Path},
 };
@@ -14,9 +16,13 @@ use alloc::{
 };
 use core::result::Result;
 
+pub const CHAR_DEV_MAJOR: usize = 1;
+
 #[derive(Default)]
 pub struct DevFS {
     pub fds: BTreeMap<u64, String>,
+    /** Name => (Major, Minor) */
+    pub devs: BTreeMap<String, (usize, usize)>,
 }
 
 const DEVFS_FILES: [&str; 5] = ["zero", "null", "kmsg", "random", "urandom"];
@@ -28,13 +34,21 @@ impl FileSystem for DevFS {
     fn open(&mut self, path: &Path) -> Result<File, ()> {
         for file_name in DEVFS_FILES {
             if file_name == path[0] {
-                let fd = self.fds.len() as u64 + 1;
+                let fd = self.fds.len() as u64;
                 self.fds.insert(fd, String::from(file_name));
                 return Ok(File {
                     fd,
                     r#type: FileType::CharDev,
                 });
             }
+        }
+        if let Some(_dev) = self.devs.get(&path[0]) {
+            let fd = self.fds.len() as u64;
+            self.fds.insert(fd, String::from(&path[0]));
+            return Ok(File {
+                fd,
+                r#type: FileType::CharDev,
+            });
         }
         Err(())
     }
@@ -86,7 +100,17 @@ impl FileSystem for DevFS {
         match self.fds.get(&fd.fd) {
             Some(file_name) => match &file_name[..] {
                 "null" => Ok(buf.len() as u64),
-                _ => Err(()), // unwritable device
+                _ => {
+                    if let Some((_major, minor)) = self.devs.get(&file_name[..]) {
+                        unsafe {
+                            lock_uinit!(DEVICE_MGR).char_devs[*minor]
+                                .print_str(&String::from_utf8_lossy(buf));
+                        }
+                        Ok(buf.len() as u64)
+                    } else {
+                        Err(()) // unwritable device
+                    }
+                }
             },
             None => Err(()),
         }
@@ -103,5 +127,22 @@ impl FileSystem for DevFS {
     }
     fn list_dir(&mut self) -> Result<Vec<String>, ()> {
         Ok(DEVFS_FILES.map(String::from).to_vec())
+    }
+    fn mknod(&mut self, path: &Path, _file_type: FileType, id: (usize, usize)) -> Result<(), ()> {
+        self.devs.insert(path[0].clone(), id);
+        Ok(())
+    }
+}
+
+impl DevFS {
+    pub fn add_device<S>(&mut self, name: S, id: (usize, usize))
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
+        if !DEVFS_FILES.contains(&name.as_str()) {
+            return;
+        }
+        self.devs.insert(name, id);
     }
 }

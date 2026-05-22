@@ -9,9 +9,11 @@ use crate::{
     global::GlobalUninit,
     mutex::Mutex,
     page::{KERNEL_PT, PAGE_SIZE, Paging, ppn_to_vpn, vpn_to_ppn},
+    vfs::VfsFile,
 };
 use alloc::{
     collections::{BTreeMap, BTreeSet},
+    string::{String, ToString},
     sync::Arc,
     vec::Vec,
 };
@@ -106,6 +108,7 @@ where
             page_allocs,
             stack,
             next_schedule: None,
+            fds: FdTable::default(),
         };
         self.tasks.insert(pid, task);
         let (min_vruntime, _) = self.vruntime.first().unwrap();
@@ -220,12 +223,34 @@ where
             page_allocs,
             stack,
             next_schedule: None,
+            fds: FdTable::default(),
         };
         self.tasks.insert(pid, child);
         let (min_vruntime, _) = self.vruntime.first().unwrap();
         self.vruntime.insert((*min_vruntime, pid));
 
         pid
+    }
+}
+
+#[derive(Default)]
+pub struct FdTable {
+    max_fd: usize,
+    fds: BTreeMap<usize, VfsFile>,
+}
+
+impl FdTable {
+    pub fn add(&mut self, file: VfsFile) -> usize {
+        let fd = self.max_fd;
+        self.fds.insert(fd, file);
+        self.max_fd += 1;
+        fd
+    }
+    pub fn get(&self, fd: usize) -> Option<&VfsFile> {
+        self.fds.get(&fd)
+    }
+    pub fn remove(&mut self, fd: usize) {
+        self.fds.remove(&fd);
     }
 }
 
@@ -252,6 +277,7 @@ where
     stack: usize,
     /** Minimum timestamp for next schedule, set by `sleep` syscall */
     pub next_schedule: Option<u64>,
+    pub fds: FdTable,
 }
 
 unsafe impl<P> Sync for Task<P> where P: Paging + Send {}
@@ -267,6 +293,52 @@ where
     }
     pub fn is_kernel(&self) -> bool {
         self.pid == KERNEL_PID
+    }
+    /**
+     * Returns the length of copied bytes.
+     */
+    pub fn copy_from_user(&self, user_addr: usize, mut kernel_buf: &mut [u8]) -> usize {
+        let buf_size = kernel_buf.len();
+        'main: while !kernel_buf.is_empty() {
+            for alloc in &self.page_allocs {
+                let (vpage, p_page, page_count, _flags) = alloc.as_ref();
+                if user_addr >= vpage * PAGE_SIZE && user_addr < (vpage + page_count) * PAGE_SIZE {
+                    let mut offset = user_addr % PAGE_SIZE;
+                    while !kernel_buf.is_empty() && offset < page_count * PAGE_SIZE {
+                        kernel_buf[0] = unsafe {
+                            ((ppn_to_vpn(*p_page) * PAGE_SIZE + offset) as *const u8).read()
+                        };
+                        kernel_buf = &mut kernel_buf[1..];
+                        offset += 1;
+                    }
+                    if kernel_buf.is_empty() {
+                        break 'main;
+                    } else {
+                        continue 'main;
+                    }
+                }
+            }
+            break; // kernel_buf is not full but cannot dump from user space anymore
+        }
+        buf_size - kernel_buf.len()
+    }
+    pub fn copy_user_string(&self, user_addr: usize) -> String {
+        const BUF_SIZE: usize = 16;
+        let mut string_vec = Vec::new();
+        'main: loop {
+            let mut buf = [0; BUF_SIZE];
+            let len = self.copy_from_user(user_addr, &mut buf);
+            for byte in &buf[..len] {
+                if *byte == 0 {
+                    break 'main;
+                }
+                string_vec.push(*byte);
+            }
+            if len < BUF_SIZE {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&string_vec).to_string()
     }
 }
 
@@ -314,6 +386,7 @@ pub fn task_init() {
         page_allocs: Vec::default(),
         stack: 0,
         next_schedule: None,
+        fds: FdTable::default(),
     };
 
     let mut tasks = BTreeMap::new();
@@ -345,6 +418,7 @@ pub unsafe fn kernel_fork() {
             page_allocs: Vec::default(),
             stack: 0,
             next_schedule: None,
+            fds: FdTable::default(),
         };
         scheduler.tasks.insert(new_task.pid, new_task);
         scheduler.max_pid += 1;

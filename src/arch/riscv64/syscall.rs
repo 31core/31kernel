@@ -6,14 +6,6 @@ use crate::{
 };
 use core::arch::asm;
 
-unsafe fn syscall_sleep<P>(scheduler: &mut Scheduler<P>, timestamp: u64)
-where
-    P: Paging + Send,
-{
-    let next_time = crate::time::get_sys_time() + timestamp;
-    scheduler.current_task_mut().next_schedule = Some(next_time);
-}
-
 unsafe fn syscall_fork<P>(scheduler: &mut Scheduler<P>, ctx: *mut Context)
 where
     P: Paging + Send,
@@ -29,6 +21,8 @@ where
 pub unsafe fn syscall(ctx: *mut Context) {
     let syscall_num = unsafe { (*ctx).x[16] };
     let syscall_arg0 = unsafe { (*ctx).x[9] };
+    let syscall_arg1 = unsafe { (*ctx).x[10] };
+    let syscall_arg2 = unsafe { (*ctx).x[11] };
 
     let mut scheduler_guard = SCHEDULER.lock();
     let scheduler = unsafe { scheduler_guard.assume_init_mut() };
@@ -38,12 +32,28 @@ pub unsafe fn syscall(ctx: *mut Context) {
             super::trap::kill_task(scheduler, ctx);
             return;
         },
-        SYSCALL_SLEEP => {
-            unsafe { syscall_sleep(scheduler, syscall_arg0) };
-        }
-        SYSCALL_FORK => {
-            unsafe { syscall_fork(scheduler, ctx) };
-        }
+        SYSCALL_OPEN => unsafe {
+            let path = scheduler
+                .current_task()
+                .copy_user_string(syscall_arg0 as usize);
+            let current_task = scheduler.current_task_mut();
+            (*ctx).x[9] = syscall_open(current_task, &path) as u64;
+        },
+        SYSCALL_WRITE => unsafe {
+            let mut buf = alloc::vec![0; syscall_arg2 as usize];
+            scheduler
+                .current_task()
+                .copy_from_user(syscall_arg1 as usize, &mut buf);
+            let current_task = scheduler.current_task_mut();
+            (*ctx).x[9] = syscall_write(current_task, syscall_arg0, &buf) as u64;
+        },
+        SYSCALL_SLEEP => unsafe {
+            let current_task = scheduler.current_task_mut();
+            syscall_sleep(current_task, syscall_arg0);
+        },
+        SYSCALL_FORK => unsafe {
+            syscall_fork(scheduler, ctx);
+        },
         _ => {}
     }
 
