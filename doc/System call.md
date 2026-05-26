@@ -29,6 +29,9 @@
 |------|-------|------------|------------|------------|------------|--------------|
 | 0    | exit  | Exit code  | -          | -          | -          | -            |
 | 1    | open  | Path string pointer     | -          | -          | -            | File descriptor, `-1` for any error. |
+| 2    | read  | File descriptor         | Buffer pointer          | Length of buffer | -            | Length of bytes to read, `-1` for any error.          |
 | 3    | write | File descriptor         | Buffer pointer          | Length of buffer | -            | Length of written bytes, `-1` for any error.          |
-| 6    | sleep | Timestamp  in nanosecond| -          | -          | -            |-           |
+| 4    | lseek | File descriptor         | Position   | -          | -          | `0` for success, `-1` for any error|
+| 5    | close | File descriptor         | -          | -          | -            | `0` for success, `-1` for any error|
+| 6    | sleep | Timestamp  in nanosecond| -          | -          | -            | -            |
 | 7    | fork  | -          | -          | -          | -          | Child PID for parent process, `0` for child process|

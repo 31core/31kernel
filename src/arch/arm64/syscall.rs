@@ -44,13 +44,27 @@ pub unsafe fn syscall(ctx: *mut Context) {
             let current_task = scheduler.current_task_mut();
             (*ctx).x[0] = syscall_open(current_task, &path) as u64;
         },
+        SYSCALL_READ => unsafe {
+            let mut buf = alloc::vec![0; syscall_arg2 as usize];
+            let current_task = scheduler.current_task_mut();
+            (*ctx).x[0] = syscall_read(current_task, syscall_arg0, &mut buf) as u64;
+            current_task.copy_to_user(syscall_arg1 as usize, &buf);
+        },
         SYSCALL_WRITE => unsafe {
             let mut buf = alloc::vec![0; syscall_arg2 as usize];
-            scheduler
-                .current_task()
-                .copy_from_user(syscall_arg1 as usize, &mut buf);
             let current_task = scheduler.current_task_mut();
+            current_task.copy_from_user(syscall_arg1 as usize, &mut buf);
             (*ctx).x[0] = syscall_write(current_task, syscall_arg0, &buf) as u64;
+        },
+        SYSCALL_LSEEK => unsafe {
+            let current_task = scheduler.current_task_mut();
+            (*ctx).x[0] = syscall_lseek(current_task, syscall_arg0, syscall_arg1) as u64;
+        },
+        SYSCALL_CLOSE => unsafe {
+            let mut buf = alloc::vec![0; syscall_arg2 as usize];
+            let current_task = scheduler.current_task_mut();
+            current_task.copy_from_user(syscall_arg1 as usize, &mut buf);
+            (*ctx).x[0] = syscall_close(current_task, syscall_arg0) as u64;
         },
         SYSCALL_SLEEP => unsafe {
             let current_task = scheduler.current_task_mut();

@@ -52,6 +52,12 @@ where
             page.map_data_u(stack, vpn_to_ppn(stack), USER_STACK_PAGES);
         }
         let mut page_allocs = Vec::new();
+        page_allocs.push(Arc::new((
+            stack,
+            vpn_to_ppn(stack),
+            USER_STACK_PAGES,
+            alloc::vec![PFlags::Read, PFlags::Write],
+        )));
 
         for prog in &elf.p_headers {
             if let PType::Load = prog.p_type {
@@ -106,7 +112,6 @@ where
             nice: self.current_task().nice,
             context,
             page_allocs,
-            stack,
             next_schedule: None,
             fds: FdTable::default(),
         };
@@ -167,22 +172,11 @@ where
     pub fn fork(&mut self) -> usize {
         self.max_pid += 1;
         let pid = self.max_pid;
-        let stack = unsafe { alloc_pages!(USER_STACK_PAGES) };
+
         let mut page = unsafe { P::new() };
         unsafe {
             page.map_kernel_region();
             page.map_data(self.trap_stack, vpn_to_ppn(self.trap_stack), 16);
-            page.map_data_u(
-                self.current_task().stack,
-                vpn_to_ppn(stack),
-                USER_STACK_PAGES,
-            );
-
-            core::ptr::copy(
-                (self.current_task().stack * PAGE_SIZE) as *const u8,
-                (stack * PAGE_SIZE) as *mut u8,
-                USER_STACK_PAGES * PAGE_SIZE,
-            );
         }
         let mut page_allocs = Vec::new();
 
@@ -194,12 +188,7 @@ where
                 page_allocs.push(Arc::clone(alloc));
             } else if flags.contains(&PFlags::Write) {
                 let p_page = unsafe { vpn_to_ppn(alloc_pages!(ceil_to_power_2(*v_pages))) };
-                page_allocs.push(Arc::new((
-                    *v_page,
-                    ppn_to_vpn(p_page),
-                    *v_pages,
-                    flags.clone(),
-                )));
+                page_allocs.push(Arc::new((*v_page, p_page, *v_pages, flags.clone())));
                 unsafe {
                     page.map_data_u(*v_page, p_page, *v_pages);
                     core::ptr::copy(
@@ -221,7 +210,6 @@ where
             nice: self.current_task().nice,
             context: self.current_task().context.clone(),
             page_allocs,
-            stack,
             next_schedule: None,
             fds: FdTable::default(),
         };
@@ -249,6 +237,9 @@ impl FdTable {
     pub fn get(&self, fd: usize) -> Option<&VfsFile> {
         self.fds.get(&fd)
     }
+    pub fn get_mut(&mut self, fd: usize) -> Option<&mut VfsFile> {
+        self.fds.get_mut(&fd)
+    }
     pub fn remove(&mut self, fd: usize) {
         self.fds.remove(&fd);
     }
@@ -273,8 +264,6 @@ where
     pub context: Context,
     /** Track pages allocations */
     page_allocs: Vec<PageAllocInfo>,
-    /** User stack bottom address */
-    stack: usize,
     /** Minimum timestamp for next schedule, set by `sleep` syscall */
     pub next_schedule: Option<u64>,
     pub fds: FdTable,
@@ -303,12 +292,41 @@ where
             for alloc in &self.page_allocs {
                 let (vpage, p_page, page_count, _flags) = alloc.as_ref();
                 if user_addr >= vpage * PAGE_SIZE && user_addr < (vpage + page_count) * PAGE_SIZE {
-                    let mut offset = user_addr % PAGE_SIZE;
+                    let mut offset = user_addr - vpage * PAGE_SIZE;
                     while !kernel_buf.is_empty() && offset < page_count * PAGE_SIZE {
                         kernel_buf[0] = unsafe {
                             ((ppn_to_vpn(*p_page) * PAGE_SIZE + offset) as *const u8).read()
                         };
                         kernel_buf = &mut kernel_buf[1..];
+                        offset += 1;
+                    }
+                    if kernel_buf.is_empty() {
+                        break 'main;
+                    } else {
+                        continue 'main;
+                    }
+                }
+            }
+            break; // kernel_buf is not full but cannot dump from user space anymore
+        }
+        buf_size - kernel_buf.len()
+    }
+    /**
+     * Returns the length of copied bytes.
+     */
+    pub fn copy_to_user(&self, user_addr: usize, mut kernel_buf: &[u8]) -> usize {
+        let buf_size = kernel_buf.len();
+        'main: while !kernel_buf.is_empty() {
+            for alloc in &self.page_allocs {
+                let (vpage, p_page, page_count, _flags) = alloc.as_ref();
+                if user_addr >= vpage * PAGE_SIZE && user_addr < (vpage + page_count) * PAGE_SIZE {
+                    let mut offset = user_addr - vpage * PAGE_SIZE;
+                    while !kernel_buf.is_empty() && offset < page_count * PAGE_SIZE {
+                        unsafe {
+                            ((ppn_to_vpn(*p_page) * PAGE_SIZE + offset) as *mut u8)
+                                .write(kernel_buf[0]);
+                        };
+                        kernel_buf = &kernel_buf[1..];
                         offset += 1;
                     }
                     if kernel_buf.is_empty() {
@@ -347,10 +365,7 @@ where
     P: Paging + Send,
 {
     fn drop(&mut self) {
-        unsafe {
-            self.page.destroy();
-            free_pages!(self.stack, USER_STACK_PAGES);
-        }
+        unsafe { self.page.destroy() };
         for alloc in &mut self.page_allocs {
             let (_vpage, p_page, page_count, _flags) = alloc.as_ref();
             if Arc::strong_count(alloc) == 1 {
@@ -384,7 +399,6 @@ pub fn task_init() {
         nice: NICE_DEFAULT,
         context: Context::default(),
         page_allocs: Vec::default(),
-        stack: 0,
         next_schedule: None,
         fds: FdTable::default(),
     };
@@ -416,7 +430,6 @@ pub unsafe fn kernel_fork() {
             nice: current_task.nice,
             context: Context::default(),
             page_allocs: Vec::default(),
-            stack: 0,
             next_schedule: None,
             fds: FdTable::default(),
         };

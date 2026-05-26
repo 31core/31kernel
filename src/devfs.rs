@@ -63,23 +63,23 @@ impl FileSystem for DevFS {
                 "kmsg" => {
                     let mut buf_off = 0;
                     let kmsg = KMSG.lock();
-                    unsafe {
-                        for msg_entry in &kmsg.assume_init_ref().msgs {
-                            if buf_off == buf.len() {
-                                break;
-                            }
+                    for msg_entry in unsafe { &kmsg.assume_init_ref().msgs } {
+                        if buf_off == buf.len() {
+                            break;
+                        }
 
-                            let msg = msg_entry.to_string();
+                        let msg = msg_entry.to_string();
 
-                            if offset >= msg.len() as u64 {
-                                offset -= msg.len() as u64;
-                            } else {
-                                let read_size = core::cmp::min(buf.len() - buf_off, msg.len());
-                                buf[buf_off..buf_off + read_size].copy_from_slice(
-                                    &msg.as_bytes()[offset as usize..offset as usize + read_size],
-                                );
-                                buf_off += read_size;
-                            }
+                        if offset >= msg.len() as u64 {
+                            offset -= msg.len() as u64;
+                        } else {
+                            let read_size =
+                                core::cmp::min(buf.len() - buf_off, msg.len() - offset as usize);
+                            buf[buf_off..buf_off + read_size].copy_from_slice(
+                                &msg.as_bytes()[offset as usize..offset as usize + read_size],
+                            );
+                            buf_off += read_size;
+                            offset = 0;
                         }
                     }
 
@@ -96,7 +96,7 @@ impl FileSystem for DevFS {
             None => Err(()),
         }
     }
-    fn write(&mut self, fd: &File, buf: &[u8]) -> Result<u64, ()> {
+    fn write(&mut self, fd: &File, buf: &[u8], _offset: u64) -> Result<u64, ()> {
         match self.fds.get(&fd.fd) {
             Some(file_name) => match &file_name[..] {
                 "null" => Ok(buf.len() as u64),

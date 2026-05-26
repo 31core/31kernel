@@ -21,6 +21,7 @@ pub fn vfs_init() {
 #[derive(Debug)]
 pub struct VfsFile {
     pub fd: File,
+    pub offset: u64,
     pub fs_id: usize,
 }
 
@@ -57,6 +58,7 @@ impl VirtualFileSystem {
         {
             Ok(VfsFile {
                 fd,
+                offset: 0,
                 fs_id: found_fs_id,
             })
         } else {
@@ -95,17 +97,34 @@ impl VirtualFileSystem {
         }
         None
     }
-    pub fn read(&mut self, fd: &VfsFile, buf: &mut [u8], offset: u64) -> Result<u64, ()> {
-        self.mounted_fs
+    pub fn read(&mut self, fd: &mut VfsFile, buf: &mut [u8]) -> Result<u64, ()> {
+        if let Ok(size) = self
+            .mounted_fs
             .get_mut(&fd.fs_id)
             .unwrap()
-            .read(&fd.fd, buf, offset)
+            .read(&fd.fd, buf, fd.offset)
+        {
+            fd.offset += size;
+            Ok(size)
+        } else {
+            Err(())
+        }
     }
-    pub fn write(&mut self, fd: &VfsFile, buf: &[u8]) -> Result<u64, ()> {
-        self.mounted_fs
+    pub fn write(&mut self, fd: &mut VfsFile, buf: &[u8]) -> Result<u64, ()> {
+        if let Ok(size) = self
+            .mounted_fs
             .get_mut(&fd.fs_id)
             .unwrap()
-            .write(&fd.fd, buf)
+            .write(&fd.fd, buf, fd.offset)
+        {
+            fd.offset += size;
+            Ok(size)
+        } else {
+            Err(())
+        }
+    }
+    pub fn close(&mut self, fd: &VfsFile) -> Result<(), ()> {
+        self.mounted_fs.get_mut(&fd.fs_id).unwrap().close(&fd.fd)
     }
 }
 
@@ -127,7 +146,7 @@ pub struct File {
 pub trait FileSystem {
     fn create(&mut self, path: &Path) -> Result<File, ()>;
     fn open(&mut self, path: &Path) -> Result<File, ()>;
-    fn write(&mut self, fd: &File, buf: &[u8]) -> Result<u64, ()>;
+    fn write(&mut self, fd: &File, buf: &[u8], offset: u64) -> Result<u64, ()>;
     fn read(&mut self, fd: &File, buf: &mut [u8], offset: u64) -> Result<u64, ()>;
     fn remove(&mut self, path: &Path) -> Result<(), ()>;
     fn rename(&mut self, src: &Path, dst: &Path) -> Result<(), ()>;
