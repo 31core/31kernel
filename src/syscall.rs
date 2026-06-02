@@ -3,7 +3,6 @@
 */
 
 use crate::{page::Paging, task::Task, vfs::ROOT_VFS};
-use alloc::{string::String, vec::Vec};
 
 pub const SYSCALL_EXIT: u64 = 0;
 pub const SYSCALL_OPEN: u64 = 1;
@@ -21,14 +20,9 @@ pub unsafe fn syscall_open<P>(current_task: &mut Task<P>, path: &str) -> isize
 where
     P: Paging + Send,
 {
-    let path = path
-        .split('/')
-        .skip(1)
-        .map(String::from)
-        .collect::<Vec<String>>();
     let mut vfs_guard = ROOT_VFS.lock();
     let vfs = unsafe { vfs_guard.assume_init_mut() };
-    if let Ok(fd) = vfs.open(&path) {
+    if let Ok(fd) = vfs.open(path) {
         current_task.fds.add(fd) as isize
     } else {
         SYSCALL_RET_ERR

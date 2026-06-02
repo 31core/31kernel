@@ -6,8 +6,9 @@ use crate::{
     device::DEVICE_MGR,
     kmsg::KMSG,
     lock_uinit,
+    path::Path,
     rand::{GLOBAL_RNG, RandomGenerator},
-    vfs::{File, FileSystem, FileType, Path},
+    vfs::{File, FileSystem, FileType, FsError},
 };
 use alloc::{
     collections::BTreeMap,
@@ -28,12 +29,13 @@ pub struct DevFS {
 const DEVFS_FILES: [&str; 5] = ["zero", "null", "kmsg", "random", "urandom"];
 
 impl FileSystem for DevFS {
-    fn create(&mut self, _path: &Path) -> Result<File, ()> {
-        Err(())
+    fn create(&mut self, _path: &Path) -> Result<File, FsError> {
+        Err(FsError::NotSupported)
     }
-    fn open(&mut self, path: &Path) -> Result<File, ()> {
+    fn open(&mut self, path: &Path) -> Result<File, FsError> {
+        let dev = path.iter().collect::<Vec<&str>>().get(1).copied().unwrap();
         for file_name in DEVFS_FILES {
-            if file_name == path[0] {
+            if file_name == dev {
                 let fd = self.fds.len() as u64;
                 self.fds.insert(fd, String::from(file_name));
                 return Ok(File {
@@ -42,17 +44,17 @@ impl FileSystem for DevFS {
                 });
             }
         }
-        if let Some(_dev) = self.devs.get(&path[0]) {
+        if let Some(_dev) = self.devs.get(dev) {
             let fd = self.fds.len() as u64;
-            self.fds.insert(fd, String::from(&path[0]));
+            self.fds.insert(fd, String::from(dev));
             return Ok(File {
                 fd,
                 r#type: FileType::CharDev,
             });
         }
-        Err(())
+        Err(FsError::NoSuchFile)
     }
-    fn read(&mut self, fd: &File, buf: &mut [u8], mut offset: u64) -> Result<u64, ()> {
+    fn read(&mut self, fd: &File, buf: &mut [u8], mut offset: u64) -> Result<u64, FsError> {
         match self.fds.get(&fd.fd) {
             Some(file_name) => match &file_name[..] {
                 "zero" => {
@@ -91,12 +93,12 @@ impl FileSystem for DevFS {
                     }
                     Ok(buf.len() as u64)
                 }
-                _ => Err(()), // unreadable device
+                _ => Err(FsError::PermissionDenied), // unreadable device
             },
-            None => Err(()),
+            None => Err(FsError::NoSuchFile),
         }
     }
-    fn write(&mut self, fd: &File, buf: &[u8], _offset: u64) -> Result<u64, ()> {
+    fn write(&mut self, fd: &File, buf: &[u8], _offset: u64) -> Result<u64, FsError> {
         match self.fds.get(&fd.fd) {
             Some(file_name) => match &file_name[..] {
                 "null" => Ok(buf.len() as u64),
@@ -108,28 +110,34 @@ impl FileSystem for DevFS {
                         }
                         Ok(buf.len() as u64)
                     } else {
-                        Err(()) // unwritable device
+                        Err(FsError::PermissionDenied) // unwritable device
                     }
                 }
             },
-            None => Err(()),
+            None => Err(FsError::NoSuchFile),
         }
     }
-    fn remove(&mut self, _path: &Path) -> Result<(), ()> {
-        Err(())
+    fn remove(&mut self, _path: &Path) -> Result<(), FsError> {
+        Err(FsError::NotSupported)
     }
-    fn rename(&mut self, _src: &Path, _dst: &Path) -> Result<(), ()> {
-        Err(())
+    fn rename(&mut self, _src: &Path, _dst: &Path) -> Result<(), FsError> {
+        Err(FsError::NotSupported)
     }
-    fn close(&mut self, fd: &File) -> Result<(), ()> {
+    fn close(&mut self, fd: &File) -> Result<(), FsError> {
         self.fds.remove(&fd.fd);
         Ok(())
     }
-    fn list_dir(&mut self) -> Result<Vec<String>, ()> {
+    fn list_dir(&mut self) -> Result<Vec<String>, FsError> {
         Ok(DEVFS_FILES.map(String::from).to_vec())
     }
-    fn mknod(&mut self, path: &Path, _file_type: FileType, id: (usize, usize)) -> Result<(), ()> {
-        self.devs.insert(path[0].clone(), id);
+    fn mknod(
+        &mut self,
+        path: &Path,
+        _file_type: FileType,
+        id: (usize, usize),
+    ) -> Result<(), FsError> {
+        let dev = path.iter().collect::<Vec<&str>>().first().copied().unwrap();
+        self.devs.insert(dev.to_string(), id);
         Ok(())
     }
 }

@@ -13,6 +13,7 @@ mod lang_items;
 mod mcache;
 mod mutex;
 mod page;
+mod path;
 mod rand;
 mod syscall;
 mod task;
@@ -84,12 +85,13 @@ fn soc_init(dtb: &DeviceTree) {
 /** Setup console (serial0) for kmsg output. */
 fn setup_console(dtb: &DeviceTree) {
     fn setup_by_serial0_node(serial0_node: &Node) {
-        use alloc::{boxed::Box, string::String};
+        use alloc::boxed::Box;
         use devfs::CHAR_DEV_MAJOR;
         use device::{
             DEVICE_MGR,
             uart::{ns16550::NS16550, pl011::PL011},
         };
+        use path::Path;
         use vfs::{FileType, ROOT_VFS};
 
         let mut kmsg_guard = kmsg::KMSG.lock();
@@ -108,13 +110,9 @@ fn setup_console(dtb: &DeviceTree) {
             kmsg.output_handler = Some(Box::new(PL011(regs[0].0)));
             let id = device_mgr.register_char_dev(Box::new(PL011(regs[0].0)));
 
-            vfs.get_fs_mut(&[String::from("dev")])
+            vfs.get_fs_mut("/dev")
                 .unwrap()
-                .mknod(
-                    &[String::from("tty0")],
-                    FileType::CharDev,
-                    (CHAR_DEV_MAJOR, id),
-                )
+                .mknod(Path::new("tty0"), FileType::CharDev, (CHAR_DEV_MAJOR, id))
                 .unwrap();
         }
         if let Some(compatible) = serial0_node.get_property("compatible")
@@ -125,13 +123,9 @@ fn setup_console(dtb: &DeviceTree) {
             kmsg.output_handler = Some(Box::new(NS16550(regs[0].0)));
             let id = device_mgr.register_char_dev(Box::new(NS16550(regs[0].0)));
 
-            vfs.get_fs_mut(&[String::from("dev")])
+            vfs.get_fs_mut("/dev")
                 .unwrap()
-                .mknod(
-                    &[String::from("tty0")],
-                    FileType::CharDev,
-                    (CHAR_DEV_MAJOR, id),
-                )
+                .mknod(Path::new("tty0"), FileType::CharDev, (CHAR_DEV_MAJOR, id))
                 .unwrap();
         }
         /* map registers */
