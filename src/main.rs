@@ -199,8 +199,10 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     clear_bss();
     cpu_init();
     unsafe {
+        use buddy_allocator::BUDDY_ALLOCATOR;
         use page::PAGE_SIZE;
-        buddy_allocator::init(
+        lock_uinit!(BUDDY_ALLOCATOR).init();
+        lock_uinit!(BUDDY_ALLOCATOR).add_zone(
             addr_of!(HEAP_START) as usize / PAGE_SIZE,
             MEM_SIZE / PAGE_SIZE,
         );
