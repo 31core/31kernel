@@ -271,7 +271,10 @@ impl BlockCipher for Aes128 {
                     &self.round_keys[round - 1]
                 };
 
-                let rc = if row == 0 { *rc } else { 0 };
+                /* rc = rc if row == 0, otherwise rc = 0 */
+                let mask = -((row == 0) as i8);
+                let mask = core::hint::black_box(mask);
+                let rc = *rc & mask as u8 | 0 & !(mask as u8);
 
                 self.round_keys[round][4 * row] = rc
                     ^ SBOX[previous_key[4 * ((row + 1) % 4 + 1) - 1] as usize]
@@ -297,34 +300,33 @@ impl BlockCipher for Aes128 {
         block_to_array(&mut array, block);
         add_round_key(&mut array, &self.key);
 
-        for round in 0..AES128_ROUND {
+        for round in 0..AES128_ROUND - 1 {
             sub_bytes(&mut array);
             shift_rows(&mut array);
-            if round < AES128_ROUND - 1 {
-                mix_columns(&mut array);
-            }
+            mix_columns(&mut array);
             add_round_key(&mut array, &self.round_keys[round]);
         }
+        sub_bytes(&mut array);
+        shift_rows(&mut array);
+        add_round_key(&mut array, &self.round_keys[AES128_ROUND - 1]);
 
         array_to_block(block, &array);
     }
     fn block_decrypt(&self, block: &mut [u8]) {
         let mut array = [0; AES_BLOCK_SIZE];
-        for (i, byte) in block.iter().enumerate().take(AES_BLOCK_SIZE) {
-            let col = i / 4;
-            let row = i % 4;
-            array[4 * row + col] = *byte;
-        }
+        block_to_array(&mut array, block);
 
-        for round in (0..AES128_ROUND).rev() {
+        add_round_key(&mut array, &self.round_keys[AES128_ROUND - 1]);
+        shift_rows_inv(&mut array);
+        sub_bytes_inv(&mut array);
+        for round in (0..AES128_ROUND - 1).rev() {
             add_round_key(&mut array, &self.round_keys[round]);
-            if round < AES128_ROUND - 1 {
-                mix_columns_inv(&mut array);
-            }
+            mix_columns_inv(&mut array);
             shift_rows_inv(&mut array);
             sub_bytes_inv(&mut array);
         }
 
+        add_round_key(&mut array, &self.key);
         array_to_block(block, &array);
     }
 }
@@ -357,7 +359,10 @@ impl BlockCipher for Aes256 {
                     &self.round_keys[round - 1]
                 };
 
-                let rc = if row == 0 { RC[round / 2] } else { 0 };
+                /* rc = RC[round / 2] if row == 0, otherwise rc = 0 */
+                let mask = -((row == 0) as i8);
+                let mask = core::hint::black_box(mask);
+                let rc = RC[round / 2] & (mask as u8) | 0 & !(mask as u8);
 
                 if round % 2 == 1 {
                     self.round_keys[round][4 * row] = rc
@@ -388,34 +393,33 @@ impl BlockCipher for Aes256 {
         block_to_array(&mut array, block);
         add_round_key(&mut array, &self.key);
 
-        for round in 0..AES256_ROUND {
+        for round in 0..AES256_ROUND - 1 {
             sub_bytes(&mut array);
             shift_rows(&mut array);
-            if round < AES256_ROUND - 1 {
-                mix_columns(&mut array);
-            }
+            mix_columns(&mut array);
             add_round_key(&mut array, &self.round_keys[round]);
         }
+        sub_bytes(&mut array);
+        shift_rows(&mut array);
+        add_round_key(&mut array, &self.round_keys[AES256_ROUND - 1]);
 
         array_to_block(block, &array);
     }
     fn block_decrypt(&self, block: &mut [u8]) {
         let mut array = [0; AES_BLOCK_SIZE];
-        for (i, byte) in block.iter().enumerate().take(AES_BLOCK_SIZE) {
-            let col = i / 4;
-            let row = i % 4;
-            array[4 * row + col] = *byte;
-        }
+        block_to_array(&mut array, block);
 
-        for round in (0..AES256_ROUND).rev() {
+        add_round_key(&mut array, &self.round_keys[AES256_ROUND - 1]);
+        shift_rows_inv(&mut array);
+        sub_bytes_inv(&mut array);
+        for round in (0..AES256_ROUND - 1).rev() {
             add_round_key(&mut array, &self.round_keys[round]);
-            if round < AES256_ROUND - 1 {
-                mix_columns_inv(&mut array);
-            }
+            mix_columns_inv(&mut array);
             shift_rows_inv(&mut array);
             sub_bytes_inv(&mut array);
         }
 
+        add_round_key(&mut array, &self.key);
         array_to_block(block, &array);
     }
 }
