@@ -6,8 +6,60 @@ pub trait BlockCipher {
     /** key size in bytes */
     const KEY_SIZE: usize;
     fn set_key(&mut self, key: &[u8]);
-    fn block_encrypt(&self, block: &mut [u8]);
-    fn block_decrypt(&self, block: &mut [u8]);
+    fn block_encrypt(&mut self, block: &mut [u8]);
+    fn block_decrypt(&mut self, block: &mut [u8]);
+}
+
+pub struct CbcCipher<B: BlockCipher, const S: usize> {
+    block_cipher: B,
+    prev_block: [u8; S],
+}
+
+impl<B, const S: usize> Default for CbcCipher<B, S>
+where
+    B: BlockCipher + Default,
+{
+    fn default() -> Self {
+        Self {
+            block_cipher: B::default(),
+            prev_block: [0; S],
+        }
+    }
+}
+
+impl<B, const S: usize> CbcCipher<B, S>
+where
+    B: BlockCipher + Default,
+{
+    pub fn set_iv(&mut self, iv: &[u8]) {
+        self.prev_block.copy_from_slice(iv);
+    }
+}
+
+impl<B, const S: usize> BlockCipher for CbcCipher<B, S>
+where
+    B: BlockCipher + Default,
+{
+    const BLOCK_SIZE: usize = B::BLOCK_SIZE;
+    const KEY_SIZE: usize = B::KEY_SIZE;
+    fn set_key(&mut self, key: &[u8]) {
+        self.block_cipher.set_key(key);
+    }
+    fn block_encrypt(&mut self, block: &mut [u8]) {
+        for (i, byte) in block.iter_mut().enumerate() {
+            *byte ^= self.prev_block[i];
+        }
+        self.block_cipher.block_encrypt(block);
+        self.prev_block = block.try_into().unwrap();
+    }
+    fn block_decrypt(&mut self, block: &mut [u8]) {
+        let prev_block = block.try_into().unwrap();
+        self.block_cipher.block_decrypt(block);
+        for (i, byte) in block.iter_mut().enumerate() {
+            *byte ^= self.prev_block[i];
+        }
+        self.prev_block = prev_block;
+    }
 }
 
 pub trait StreamCipher {

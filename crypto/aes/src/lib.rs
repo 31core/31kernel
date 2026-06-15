@@ -271,10 +271,7 @@ impl BlockCipher for Aes128 {
                     &self.round_keys[round - 1]
                 };
 
-                /* rc = rc if row == 0, otherwise rc = 0 */
-                let mask = -((row == 0) as i8);
-                let mask = core::hint::black_box(mask);
-                let rc = *rc & mask as u8 | 0 & !(mask as u8);
+                let rc = if row == 0 { *rc } else { 0 };
 
                 self.round_keys[round][4 * row] = rc
                     ^ SBOX[previous_key[4 * ((row + 1) % 4 + 1) - 1] as usize]
@@ -295,7 +292,7 @@ impl BlockCipher for Aes128 {
             }
         }
     }
-    fn block_encrypt(&self, block: &mut [u8]) {
+    fn block_encrypt(&mut self, block: &mut [u8]) {
         let mut array = [0; AES_BLOCK_SIZE];
         block_to_array(&mut array, block);
         add_round_key(&mut array, &self.key);
@@ -312,7 +309,7 @@ impl BlockCipher for Aes128 {
 
         array_to_block(block, &array);
     }
-    fn block_decrypt(&self, block: &mut [u8]) {
+    fn block_decrypt(&mut self, block: &mut [u8]) {
         let mut array = [0; AES_BLOCK_SIZE];
         block_to_array(&mut array, block);
 
@@ -359,10 +356,7 @@ impl BlockCipher for Aes256 {
                     &self.round_keys[round - 1]
                 };
 
-                /* rc = RC[round / 2] if row == 0, otherwise rc = 0 */
-                let mask = -((row == 0) as i8);
-                let mask = core::hint::black_box(mask);
-                let rc = RC[round / 2] & (mask as u8) | 0 & !(mask as u8);
+                let rc = if row == 0 { RC[round / 2] } else { 0 };
 
                 if round % 2 == 1 {
                     self.round_keys[round][4 * row] = rc
@@ -388,7 +382,7 @@ impl BlockCipher for Aes256 {
             }
         }
     }
-    fn block_encrypt(&self, block: &mut [u8]) {
+    fn block_encrypt(&mut self, block: &mut [u8]) {
         let mut array = [0; AES_BLOCK_SIZE];
         block_to_array(&mut array, block);
         add_round_key(&mut array, &self.key);
@@ -405,7 +399,7 @@ impl BlockCipher for Aes256 {
 
         array_to_block(block, &array);
     }
-    fn block_decrypt(&self, block: &mut [u8]) {
+    fn block_decrypt(&mut self, block: &mut [u8]) {
         let mut array = [0; AES_BLOCK_SIZE];
         block_to_array(&mut array, block);
 
