@@ -5,7 +5,8 @@ use core::{mem::MaybeUninit, ptr::addr_of};
 
 pub static mut KERNEL_PT: MaybeUninit<usize> = MaybeUninit::uninit();
 
-pub const PAGE_SIZE: usize = 4096;
+pub const PAGE_BITS: usize = 12;
+pub const PAGE_SIZE: usize = 1 << PAGE_BITS;
 const VIRT_ADDR: usize = 0xffffffc040000000;
 const PHY_ADDR: usize = 0x40000000;
 
