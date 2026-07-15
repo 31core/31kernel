@@ -16,6 +16,56 @@ pub const SYSCALL_FORK: u64 = 7;
 pub const SYSCALL_RET_OK: isize = 0;
 pub const SYSCALL_RET_ERR: isize = -1;
 
+/**
+ * Dispatches these syscalls, with the current [Task] struct:
+ * * SYSCALL_OPEN
+ * * SYSCALL_READ
+ * * SYSCALL_WRITE
+ * * SYSCALL_LSEEK
+ * * SYSCALL_CLOSE
+ * * SYSCALL_SLEEP
+ */
+pub fn dispatch_with_task<P>(
+    current_task: &mut Task<P>,
+    syscall_num: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    _a3: u64,
+) -> Option<u64>
+where
+    P: Paging + Send,
+{
+    match syscall_num {
+        SYSCALL_OPEN => unsafe {
+            let path = current_task.copy_user_string(a0 as usize);
+            Some(syscall_open(current_task, &path) as u64)
+        },
+        SYSCALL_READ => unsafe {
+            let mut buf = alloc::vec![0; a2 as usize];
+            let ret = syscall_read(current_task, a0, &mut buf) as u64;
+            current_task.copy_to_user(a1 as usize, &buf);
+            Some(ret)
+        },
+        SYSCALL_WRITE => unsafe {
+            let mut buf = alloc::vec![0; a2 as usize];
+            current_task.copy_from_user(a1 as usize, &mut buf);
+            Some(syscall_write(current_task, a0, &buf) as u64)
+        },
+        SYSCALL_LSEEK => unsafe { Some(syscall_lseek(current_task, a0, a1) as u64) },
+        SYSCALL_CLOSE => unsafe {
+            let mut buf = alloc::vec![0; a2 as usize];
+            current_task.copy_from_user(a1 as usize, &mut buf);
+            Some(syscall_close(current_task, a0) as u64)
+        },
+        SYSCALL_SLEEP => unsafe {
+            syscall_sleep(current_task, a0);
+            None
+        },
+        _ => None,
+    }
+}
+
 pub unsafe fn syscall_open<P>(current_task: &mut Task<P>, path: &str) -> isize
 where
     P: Paging + Send,
