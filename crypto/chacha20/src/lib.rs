@@ -34,6 +34,10 @@ fn quarter_round(mut a: u32, mut b: u32, mut c: u32, mut d: u32) -> (u32, u32, u
 
     (a, b, c, d)
 }
+
+/**
+ * ChaCha20 stream cipher implementation, defiened in [RFC7539](https://www.rfc-editor.org/info/rfc7539/).
+ */
 pub struct ChaCha20 {
     key: [u32; 8],
     nonce: [u32; 3],
@@ -104,11 +108,15 @@ impl StreamCipher for ChaCha20 {
             }
 
             let xor_bytes = core::cmp::min(block.len(), 64 - self.state_ptr);
-            for byte in block.iter_mut().take(xor_bytes) {
-                *byte ^= self.state[self.state_ptr];
-                self.state_ptr += 1;
+            let (output, rest) = block.split_at_mut(xor_bytes);
+            let key_stream = &self.state[self.state_ptr..self.state_ptr + xor_bytes];
+
+            for (dst, src) in output.iter_mut().zip(key_stream) {
+                *dst ^= src;
             }
-            block = &mut block[xor_bytes..];
+
+            block = rest;
+            self.state_ptr += xor_bytes;
             self.state_ptr %= 64;
         }
     }
