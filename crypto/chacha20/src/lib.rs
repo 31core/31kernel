@@ -36,7 +36,7 @@ fn quarter_round(mut a: u32, mut b: u32, mut c: u32, mut d: u32) -> (u32, u32, u
 }
 
 /**
- * ChaCha20 stream cipher implementation, defiened in [RFC7539](https://www.rfc-editor.org/info/rfc7539/).
+ * ChaCha20 stream cipher implementation, defiened in [RFC8439](https://www.rfc-editor.org/info/rfc8439/).
  */
 pub struct ChaCha20 {
     key: [u32; 8],
