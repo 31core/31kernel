@@ -45,7 +45,7 @@ where
         let elf = Elf::parse(elf_bytes)?;
 
         let mut page = unsafe { P::new() };
-        let stack = unsafe { alloc_pages!(USER_STACK_PAGES) };
+        let stack = alloc_pages!(USER_STACK_PAGES);
         unsafe {
             page.map_kernel_region();
             page.map_data(self.trap_stack, vpn_to_ppn(self.trap_stack), 16);
@@ -64,7 +64,7 @@ where
                 let v_page = prog.v_addr / PAGE_SIZE;
                 let v_pages = prog.p_memsz.div_ceil(PAGE_SIZE);
 
-                let p_page = unsafe { vpn_to_ppn(alloc_pages!(ceil_to_power_2(v_pages))) };
+                let p_page = vpn_to_ppn(alloc_pages!(ceil_to_power_2(v_pages)));
                 page_allocs.push(Arc::new((v_page, p_page, v_pages, prog.p_flags.to_vec())));
                 if prog.p_flags.contains(&PFlags::Exec) {
                     unsafe { page.map_text_u(v_page, p_page, v_pages) };
@@ -187,7 +187,7 @@ where
                 unsafe { page.map_text_u(*v_page, *p_page, *v_pages) };
                 page_allocs.push(Arc::clone(alloc));
             } else if flags.contains(&PFlags::Write) {
-                let p_page = unsafe { vpn_to_ppn(alloc_pages!(ceil_to_power_2(*v_pages))) };
+                let p_page = vpn_to_ppn(alloc_pages!(ceil_to_power_2(*v_pages)));
                 page_allocs.push(Arc::new((*v_page, p_page, *v_pages, flags.clone())));
                 unsafe {
                     page.map_data_u(*v_page, p_page, *v_pages);
@@ -369,14 +369,14 @@ where
         for alloc in &mut self.page_allocs {
             let (_vpage, p_page, page_count, _flags) = alloc.as_ref();
             if Arc::strong_count(alloc) == 1 {
-                unsafe { free_pages!(ppn_to_vpn(*p_page), ceil_to_power_2(*page_count)) };
+                free_pages!(ppn_to_vpn(*p_page), ceil_to_power_2(*page_count));
             }
         }
     }
 }
 
 pub fn task_init() {
-    let trap_stack = unsafe { alloc_pages!(16) };
+    let trap_stack = alloc_pages!(16);
     unsafe {
         crate::trap::trap_stack_init(trap_stack);
     }

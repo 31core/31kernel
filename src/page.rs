@@ -51,9 +51,8 @@ macro_rules! map_range_with_alloc {
 macro_rules! alloc_pages {
     ($pages_count:expr) => {{
         use $crate::{buddy_allocator::BUDDY_ALLOCATOR, page::PageAllocator};
-        let mut allocator_guard = BUDDY_ALLOCATOR.lock();
-        let allocator = allocator_guard.assume_init_mut();
-        allocator.alloc_pages($pages_count)
+        let allocator_guard = &mut *BUDDY_ALLOCATOR.lock();
+        allocator_guard.alloc_pages($pages_count).unwrap()
     }};
 }
 
@@ -61,9 +60,8 @@ macro_rules! alloc_pages {
 macro_rules! free_pages {
     ($pages_start:expr, $pages_count:expr) => {{
         use $crate::{buddy_allocator::BUDDY_ALLOCATOR, page::PageAllocator};
-        let mut allocator_guard = BUDDY_ALLOCATOR.lock();
-        let allocator = allocator_guard.assume_init_mut();
-        allocator.free_pages($pages_start, $pages_count)
+        let allocator_guard = &mut *BUDDY_ALLOCATOR.lock();
+        allocator_guard.free_pages($pages_start, $pages_count)
     }};
 }
 
@@ -92,7 +90,7 @@ pub fn pa_to_va(pa: usize) -> usize {
 }
 
 pub trait PageAllocator {
-    fn alloc_pages(&mut self, pages_count: usize) -> usize;
+    fn alloc_pages(&mut self, pages_count: usize) -> Result<usize, AllocError>;
     fn free_pages(&mut self, page_start: usize, pages_count: usize);
 }
 
@@ -111,16 +109,14 @@ pub trait Paging: Sized {
      */
     unsafe fn new() -> Self {
         unsafe {
-            let mut alloc_guard = BUDDY_ALLOCATOR.lock();
-            let alloc = alloc_guard.assume_init_mut();
-            Self::new_with_allocator(alloc)
+            let alloc_guard = &mut *BUDDY_ALLOCATOR.lock();
+            Self::new_with_allocator(alloc_guard)
         }
     }
     unsafe fn map(&mut self, vpn: usize, ppn: usize, pages: usize, mode: &[PageACL]) {
         unsafe {
-            let mut alloc_guard = BUDDY_ALLOCATOR.lock();
-            let alloc = alloc_guard.assume_init_mut();
-            self.map_with_allocator(alloc, vpn, ppn, pages, mode);
+            let alloc_guard = &mut *BUDDY_ALLOCATOR.lock();
+            self.map_with_allocator(alloc_guard, vpn, ppn, pages, mode);
         }
     }
     /**
@@ -197,9 +193,8 @@ pub trait Paging: Sized {
         A: PageAllocator;
     unsafe fn destroy(&mut self) {
         unsafe {
-            let mut alloc_guard = BUDDY_ALLOCATOR.lock();
-            let alloc = alloc_guard.assume_init_mut();
-            self.destroy_with_allocator(alloc);
+            let alloc_guard = &mut *BUDDY_ALLOCATOR.lock();
+            self.destroy_with_allocator(alloc_guard);
         }
     }
     /** map kernel memory into vm */
@@ -218,16 +213,27 @@ pub trait Paging: Sized {
     /** map kernel memory into vm, using a static page allocator */
     unsafe fn map_kernel_region_bootstrap(&mut self) {
         unsafe {
-            let mut alloc_guard = BUDDY_ALLOCATOR.lock();
-            let alloc = alloc_guard.assume_init_mut();
+            let alloc_guard = &mut *BUDDY_ALLOCATOR.lock();
             /* map .rodata */
-            map_range_with_alloc!(alloc, crate::RODATA_START, crate::RODATA_END, self, RO);
+            map_range_with_alloc!(
+                alloc_guard,
+                crate::RODATA_START,
+                crate::RODATA_END,
+                self,
+                RO
+            );
             /* map .data */
-            map_range_with_alloc!(alloc, crate::DATA_START, crate::DATA_END, self, RW);
+            map_range_with_alloc!(alloc_guard, crate::DATA_START, crate::DATA_END, self, RW);
             /* map .bss */
-            map_range_with_alloc!(alloc, crate::BSS_START, crate::BSS_END, self, RW);
+            map_range_with_alloc!(alloc_guard, crate::BSS_START, crate::BSS_END, self, RW);
             /* set kernel code (.text) */
-            map_range_with_alloc!(alloc, crate::KERNEL_START, crate::KERNEL_END, self, RX);
+            map_range_with_alloc!(
+                alloc_guard,
+                crate::KERNEL_START,
+                crate::KERNEL_END,
+                self,
+                RX
+            );
         }
     }
 }
@@ -274,20 +280,22 @@ struct StaticPageAllocator {
     bitmap: [u64; STATIC_PAGE_CAP / 64],
 }
 
+#[derive(Debug)]
+pub enum AllocError {
+    OutOfMemory,
+}
+
 impl PageAllocator for StaticPageAllocator {
-    fn alloc_pages(&mut self, pages_count: usize) -> usize {
+    fn alloc_pages(&mut self, pages_count: usize) -> Result<usize, AllocError> {
         assert_eq!(pages_count, 1);
         for (byte_idx, byte) in self.bitmap.iter_mut().enumerate() {
-            if *byte != u64::MAX {
-                for bit in 0..64 {
-                    if *byte & (1 << (63 - bit)) == 0 {
-                        *byte |= 1 << (63 - bit);
-                        return self.pages[64 * byte_idx + bit].as_ptr() as usize / PAGE_SIZE;
-                    }
-                }
+            let bit = byte.leading_ones();
+            if bit < u64::BITS {
+                *byte |= 1 << (63 - bit);
+                return Ok(self.pages[64 * byte_idx + bit as usize].as_ptr() as usize / PAGE_SIZE);
             }
         }
-        panic!("No enough page to allocate");
+        Err(AllocError::OutOfMemory)
     }
     fn free_pages(&mut self, page_start: usize, pages_count: usize) {
         assert_eq!(pages_count, 1);

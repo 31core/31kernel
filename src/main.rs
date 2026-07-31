@@ -201,8 +201,8 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     unsafe {
         use buddy_allocator::BUDDY_ALLOCATOR;
         use page::PAGE_SIZE;
-        lock_uinit!(BUDDY_ALLOCATOR).init();
-        lock_uinit!(BUDDY_ALLOCATOR).add_zone(
+        BUDDY_ALLOCATOR.lock().init();
+        BUDDY_ALLOCATOR.lock().add_zone(
             addr_of!(HEAP_START) as usize / PAGE_SIZE,
             MEM_SIZE / PAGE_SIZE,
         );

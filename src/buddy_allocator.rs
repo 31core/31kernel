@@ -3,11 +3,11 @@
  */
 
 use crate::{
-    global::GlobalUninit,
+    global::Global,
     mutex::Mutex,
-    page::{PAGE_BITS, PAGE_SIZE, PageAllocator},
+    page::{AllocError, PAGE_BITS, PAGE_SIZE, PageAllocator},
 };
-use core::{mem::MaybeUninit, ptr::NonNull};
+use core::ptr::NonNull;
 
 const NODE_COMPATIBILITY: usize = 512;
 const EXT_NODE_COMPATIBILITY: usize = 8196;
@@ -15,9 +15,9 @@ const MIN_POOL_REMAIN: usize = BUDDY_ALLOC_MAX_POW;
 const BUDDY_ALLOC_MAX_POW: usize = 48 - PAGE_BITS; // for 48-bit VA
 const MEM_ZONES: usize = 16;
 
-pub static BUDDY_ALLOCATOR: GlobalUninit<BuddyAllocator> = Mutex::new(MaybeUninit::uninit());
+pub static BUDDY_ALLOCATOR: Global<BuddyAllocator> = Mutex::new(BuddyAllocator::default());
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy)]
 /**
  * Free list node for the buddy allocator.
 */
@@ -27,10 +27,16 @@ struct FreeNode {
 }
 
 impl FreeNode {
-    fn new(page_number: usize) -> Self {
+    const fn default() -> Self {
+        Self {
+            page_number: 0,
+            next: None,
+        }
+    }
+    const fn new(page_number: usize) -> Self {
         Self {
             page_number,
-            ..Default::default()
+            next: None,
         }
     }
 }
@@ -47,6 +53,14 @@ struct FreeNodePool {
 }
 
 impl FreeNodePool {
+    const fn default() -> Self {
+        Self {
+            free_nodes: [FreeNode::default(); NODE_COMPATIBILITY],
+            freenode_remain: 0,
+            free_start: None,
+        }
+    }
+
     fn init(&mut self) {
         self.freenode_remain = NODE_COMPATIBILITY;
         self.free_start = Some(NonNull::new(self.free_nodes.as_mut_ptr()).unwrap());
@@ -93,7 +107,7 @@ impl ExtendedFreeNodePool {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct MemoryZone {
     base: usize,
     pages: usize,
@@ -101,6 +115,13 @@ struct MemoryZone {
 }
 
 impl MemoryZone {
+    const fn default() -> Self {
+        Self {
+            base: 0,
+            pages: 0,
+            pows: [None; BUDDY_ALLOC_MAX_POW],
+        }
+    }
     fn new(node_pool: &mut FreeNodePool, base: usize, mut pages: usize) -> Self {
         let mut zone = Self {
             base,
@@ -113,7 +134,7 @@ impl MemoryZone {
 
             zone.add_node(node_pool, pow, FreeNode::new(current_ptr));
 
-            let node_pages = 2_usize.pow(pow as u32);
+            let node_pages = 1 << pow;
             pages -= node_pages;
             current_ptr += node_pages;
         }
@@ -138,24 +159,26 @@ impl MemoryZone {
      * Allocate pages and returns the start page number, where `page_num` must be n power of 2.
      */
     fn alloc_pages(&mut self, node_pool: &mut FreeNodePool, pages_count: usize) -> Option<usize> {
+        debug_assert_eq!(pages_count, pages_count.next_power_of_two());
+
         for pow in 0..BUDDY_ALLOC_MAX_POW {
             let start = self.pows[pow];
 
-            if start.is_some() && 2_usize.pow(pow as u32) == pages_count {
+            if start.is_some() && 1 << pow == pages_count {
                 let new_node = self.new_node(pow);
                 node_pool.recycle_node(new_node);
                 let page_number = unsafe { new_node.as_ref().page_number };
                 return Some(self.base + page_number);
-            } else if start.is_some() && 2_usize.pow(pow as u32) > pages_count {
+            } else if start.is_some() && 1 << pow > pages_count {
                 let new_node = self.new_node(pow);
                 let left_start = unsafe { new_node.as_ref().page_number };
                 node_pool.recycle_node(new_node);
 
                 for i in (0..pow).rev() {
-                    let right_start = left_start + 2_usize.pow(i as u32);
+                    let right_start = left_start + (1 << i);
                     self.add_node(node_pool, i, FreeNode::new(right_start));
 
-                    if pages_count == 2_usize.pow(i as u32) {
+                    if pages_count == 1 << i {
                         return Some(self.base + left_start);
                     }
                 }
@@ -169,6 +192,8 @@ impl MemoryZone {
         page_start: usize,
         mut pages_count: usize,
     ) {
+        debug_assert_eq!(pages_count, pages_count.next_power_of_two());
+
         let mut pow_final = 0;
         let mut page_relative = page_start - self.base;
         /* insert into free list */
@@ -183,16 +208,16 @@ impl MemoryZone {
         /* merge free list nodes if possible */
         'pow_loop: for pow in pow_start..BUDDY_ALLOC_MAX_POW {
             if let Some(mut current) = self.pows[pow] {
-                let found_pages = 2_usize.pow(pow as u32);
+                let found_pages = 1 << pow;
 
                 /* left node */
-                if page_relative.is_multiple_of(2_usize.pow((pow + 1) as u32)) {
+                if page_relative.is_multiple_of(1 << (pow + 1)) {
                     /* current node is partner node */
                     if page_relative + found_pages == unsafe { current.as_ref().page_number } {
                         self.pows[pow] = unsafe { current.as_ref().next };
                         node_pool.recycle_node(current);
                         pow_final += 1;
-                        pages_count *= 2;
+                        pages_count <<= 1;
 
                         continue 'pow_loop;
                     }
@@ -203,7 +228,7 @@ impl MemoryZone {
                             unsafe { current.as_mut().next = next.as_ref().next };
                             node_pool.recycle_node(next);
                             pow_final += 1;
-                            pages_count *= 2;
+                            pages_count <<= 1;
 
                             continue 'pow_loop;
                         }
@@ -218,7 +243,7 @@ impl MemoryZone {
                         node_pool.recycle_node(current);
                         pow_final += 1;
                         page_relative -= pages_count;
-                        pages_count *= 2;
+                        pages_count <<= 1;
 
                         continue 'pow_loop;
                     }
@@ -230,7 +255,7 @@ impl MemoryZone {
                             node_pool.recycle_node(next);
                             pow_final += 1;
                             page_relative -= pages_count;
-                            pages_count *= 2;
+                            pages_count <<= 1;
 
                             continue 'pow_loop;
                         }
@@ -247,25 +272,11 @@ impl MemoryZone {
 }
 
 fn floor_to_power_2(mem_size: usize) -> usize {
-    for pow in (0..BUDDY_ALLOC_MAX_POW).rev() {
-        if mem_size >> pow == 1 {
-            return pow;
-        }
-    }
-    0
+    usize::BITS as usize - mem_size.leading_zeros() as usize - 1
 }
 
 pub fn ceil_to_power_2(mem_size: usize) -> usize {
-    let mut ceil_size = 1;
-    for _ in 0..BUDDY_ALLOC_MAX_POW {
-        if ceil_size >= mem_size {
-            break;
-        }
-
-        ceil_size <<= 1;
-    }
-
-    ceil_size
+    mem_size.next_power_of_two()
 }
 
 /**
@@ -284,6 +295,16 @@ pub struct BuddyAllocator {
 unsafe impl Send for BuddyAllocator {}
 
 impl BuddyAllocator {
+    pub const fn default() -> Self {
+        Self {
+            free: 0,
+            zones: [MemoryZone::default(); MEM_ZONES],
+            zone_num: 0,
+            node_pool: FreeNodePool::default(),
+            extended_pools: None,
+        }
+    }
+
     /** Initialize the allocator. */
     pub unsafe fn init(&mut self) {
         self.node_pool.init();
@@ -295,22 +316,21 @@ impl BuddyAllocator {
         self.free += pages;
     }
     /** Create a extended pool of free nodes. */
-    fn new_extended_pool(&mut self) {
+    fn new_extended_pool(&mut self) -> Result<(), AllocError> {
         /* freenode_remain += EXT_NODE_COMPATIBILITY before allocation to avoid recursion */
         self.node_pool.freenode_remain += EXT_NODE_COMPATIBILITY;
 
         let pages =
             ceil_to_power_2(core::mem::size_of::<ExtendedFreeNodePool>().div_ceil(PAGE_SIZE));
-        let page_num = self.alloc_pages(pages);
-        let pool = (page_num * PAGE_SIZE) as *mut ExtendedFreeNodePool;
-        self.extended_pools = NonNull::new(pool);
+        let page_num = self.alloc_pages(pages)?;
+        let pool = unsafe { &mut *((page_num * PAGE_SIZE) as *mut ExtendedFreeNodePool) };
 
-        unsafe {
-            (*pool).init();
-            (*pool).next = self.extended_pools;
-            (*pool).free_nodes[EXT_NODE_COMPATIBILITY - 1].next = self.node_pool.free_start;
-            self.node_pool.free_start = NonNull::new(&mut (*pool).free_nodes[0]);
-        }
+        pool.init();
+        pool.next = self.extended_pools;
+        self.extended_pools = NonNull::new(pool);
+        pool.free_nodes[EXT_NODE_COMPATIBILITY - 1].next = self.node_pool.free_start;
+        self.node_pool.free_start = NonNull::new(&mut pool.free_nodes[0]);
+        Ok(())
     }
 }
 
@@ -318,31 +338,29 @@ impl PageAllocator for BuddyAllocator {
     /**
      * Allocate pages and returns the start page number, where `page_num` must be n power of 2.
      */
-    fn alloc_pages(&mut self, pages_count: usize) -> usize {
+    fn alloc_pages(&mut self, pages_count: usize) -> Result<usize, AllocError> {
         if self.node_pool.freenode_remain <= MIN_POOL_REMAIN {
-            self.new_extended_pool();
+            self.new_extended_pool()?;
         }
 
         let pages_count = ceil_to_power_2(pages_count);
 
-        self.free -= pages_count;
-
         for zone in &mut self.zones[..self.zone_num] {
             if let Some(page_num) = zone.alloc_pages(&mut self.node_pool, pages_count) {
-                return page_num;
+                self.free -= pages_count;
+                return Ok(page_num);
             }
         }
 
-        panic!("No enough memory to allocate");
+        Err(AllocError::OutOfMemory)
     }
     fn free_pages(&mut self, page_start: usize, pages_count: usize) {
         let pages_count = ceil_to_power_2(pages_count);
 
-        self.free += pages_count;
-
         for zone in &mut self.zones[..self.zone_num] {
             if (zone.base..zone.base + zone.pages).contains(&page_start) {
                 zone.free_pages(&mut self.node_pool, page_start, pages_count);
+                self.free += pages_count;
                 break;
             }
         }

@@ -105,7 +105,7 @@ impl PageTable {
         let pte = unsafe { self.ptes.add(index).read_volatile() };
         if pte.0 == 0 {
             /* PTE is empty */
-            let ppn = vpn_to_ppn(alloc.alloc_pages(1)) as u64;
+            let ppn = vpn_to_ppn(alloc.alloc_pages(1).unwrap()) as u64;
             let pte = PageTableEntry(ppn << 10 | PTE_V_FLAG);
             self.set_pte(index, pte);
 
@@ -215,7 +215,7 @@ impl Paging for PageMapper {
     where
         A: PageAllocator,
     {
-        let root_pt = alloc.alloc_pages(1) as u64;
+        let root_pt = alloc.alloc_pages(1).unwrap() as u64;
         Self {
             root: PageTable::from_pn(root_pt),
         }
