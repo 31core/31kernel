@@ -65,7 +65,7 @@ impl FileSystem for DevFS {
                 "kmsg" => {
                     let mut buf_off = 0;
                     let kmsg = KMSG.lock();
-                    for msg_entry in unsafe { &kmsg.assume_init_ref().msgs } {
+                    for msg_entry in kmsg.get_messages() {
                         if buf_off == buf.len() {
                             break;
                         }

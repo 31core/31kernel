@@ -95,7 +95,6 @@ fn setup_console(dtb: &DeviceTree) {
         use vfs::{FileType, ROOT_VFS};
 
         let mut kmsg_guard = kmsg::KMSG.lock();
-        let kmsg = unsafe { kmsg_guard.assume_init_mut() };
 
         let mut device_mgr_guard = DEVICE_MGR.lock();
         let device_mgr = unsafe { device_mgr_guard.assume_init_mut() };
@@ -107,7 +106,7 @@ fn setup_console(dtb: &DeviceTree) {
             && let Some(reg) = serial0_node.get_property("reg")
         {
             let regs = parse_reg(reg, serial0_node.address_cells, serial0_node.size_cells);
-            kmsg.output_handler = Some(Box::new(PL011(regs[0].0)));
+            kmsg_guard.output_handler = Some(Box::new(PL011(regs[0].0)));
             let id = device_mgr.register_char_dev(Box::new(PL011(regs[0].0)));
 
             vfs.get_fs_mut("/dev")
@@ -120,7 +119,7 @@ fn setup_console(dtb: &DeviceTree) {
             && let Some(reg) = serial0_node.get_property("reg")
         {
             let regs = parse_reg(reg, serial0_node.address_cells, serial0_node.size_cells);
-            kmsg.output_handler = Some(Box::new(NS16550(regs[0].0)));
+            kmsg_guard.output_handler = Some(Box::new(NS16550(regs[0].0)));
             let id = device_mgr.register_char_dev(Box::new(NS16550(regs[0].0)));
 
             vfs.get_fs_mut("/dev")
@@ -215,7 +214,6 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
         soc_init(dtb);
     }
 
-    kmsg::kmsg_init();
     task::task_init();
     rand::rand_init();
     vfs::vfs_init();
