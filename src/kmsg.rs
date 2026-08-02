@@ -5,8 +5,8 @@
 use crate::{device::CharDev, global::Global, mutex::Mutex};
 use alloc::{
     boxed::Box,
+    collections::VecDeque,
     string::{String, ToString},
-    vec::Vec,
 };
 use core::{
     fmt::Result as FmtResult,
@@ -95,7 +95,7 @@ impl Display for KernelMessageEntry {
 
 #[derive(Default)]
 pub struct KernelMessage {
-    msgs: Vec<KernelMessageEntry>,
+    msgs: VecDeque<KernelMessageEntry>,
     /** Number of maximum log messages to keep. */
     max_log: usize,
     /** If `output_handler` is set, message will outputs when calling `add_message`. */
@@ -107,7 +107,7 @@ unsafe impl Send for KernelMessage {}
 impl KernelMessage {
     pub const fn default() -> Self {
         Self {
-            msgs: Vec::new(),
+            msgs: VecDeque::new(),
             output_handler: None,
             max_log: KMSG_MAX,
         }
@@ -146,22 +146,23 @@ impl KernelMessage {
     {
         let time = crate::time::get_sys_time();
         self.msgs
-            .push(KernelMessageEntry::new(module, time, level, msg));
+            .push_back(KernelMessageEntry::new(module, time, level, msg));
         if self.msgs.len() > self.max_log {
-            self.msgs.remove(0);
+            self.msgs.pop_front();
         }
 
         if let Some(output_fn) = &self.output_handler {
-            output_fn.print_str(&self.msgs.last().unwrap().to_string());
+            output_fn.print_str(&self.msgs.back().unwrap().to_string());
         }
     }
-    pub fn get_messages(&self) -> &[KernelMessageEntry] {
-        &self.msgs
+    pub fn get_messages(&self) -> impl Iterator<Item = &KernelMessageEntry> {
+        let (s1, s2) = self.msgs.as_slices();
+        s1.iter().chain(s2.iter())
     }
     pub fn set_max_log(&mut self, max: usize) {
         self.max_log = max;
         while self.msgs.len() > self.max_log {
-            self.msgs.remove(0);
+            self.msgs.pop_front();
         }
     }
     pub fn get_max_log(&self) -> usize {

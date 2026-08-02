@@ -286,7 +286,7 @@ where
     /**
      * Returns the length of copied bytes.
      */
-    pub fn copy_from_user(&self, user_addr: usize, mut kernel_buf: &mut [u8]) -> usize {
+    pub fn copy_from_user(&self, mut user_addr: usize, mut kernel_buf: &mut [u8]) -> usize {
         let buf_size = kernel_buf.len();
         'main: while !kernel_buf.is_empty() {
             for alloc in &self.page_allocs {
@@ -303,6 +303,7 @@ where
                     if kernel_buf.is_empty() {
                         break 'main;
                     } else {
+                        user_addr = (vpage + page_count) * PAGE_SIZE;
                         continue 'main;
                     }
                 }
@@ -314,7 +315,7 @@ where
     /**
      * Returns the length of copied bytes.
      */
-    pub fn copy_to_user(&self, user_addr: usize, mut kernel_buf: &[u8]) -> usize {
+    pub fn copy_to_user(&self, mut user_addr: usize, mut kernel_buf: &[u8]) -> usize {
         let buf_size = kernel_buf.len();
         'main: while !kernel_buf.is_empty() {
             for alloc in &self.page_allocs {
@@ -332,6 +333,7 @@ where
                     if kernel_buf.is_empty() {
                         break 'main;
                     } else {
+                        user_addr = (vpage + page_count) * PAGE_SIZE;
                         continue 'main;
                     }
                 }
@@ -347,7 +349,7 @@ where
             let mut buf = [0; BUF_SIZE];
             let len = self.copy_from_user(user_addr, &mut buf);
             for byte in &buf[..len] {
-                if *byte == 0 {
+                if *byte == b'\0' {
                     break 'main;
                 }
                 string_vec.push(*byte);
