@@ -11,7 +11,6 @@ mod global;
 mod kmsg;
 mod lang_items;
 mod mcache;
-mod mutex;
 mod page;
 mod path;
 mod rand;

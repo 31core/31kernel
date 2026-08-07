@@ -7,7 +7,6 @@ use crate::{
     arch::{Context, PageMapper},
     buddy_allocator::ceil_to_power_2,
     global::GlobalUninit,
-    mutex::Mutex,
     page::{KERNEL_PT, PAGE_SIZE, Paging, ppn_to_vpn, vpn_to_ppn},
     vfs::VfsFile,
 };
@@ -19,8 +18,9 @@ use alloc::{
 };
 use core::mem::MaybeUninit;
 use elf::{Elf, ElfError, PFlags, PType};
+use spinlock::Spinlock;
 
-pub static SCHEDULER: GlobalUninit<Scheduler<PageMapper>> = Mutex::new(MaybeUninit::uninit());
+pub static SCHEDULER: GlobalUninit<Scheduler<PageMapper>> = Spinlock::new(MaybeUninit::uninit());
 
 const USER_STACK_PAGES: usize = 16;
 

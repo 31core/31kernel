@@ -3,13 +3,13 @@
 use crate::{
     devfs::DevFS,
     global::GlobalUninit,
-    mutex::Mutex,
     path::{Path, PathBuf},
 };
 use alloc::{borrow::ToOwned, boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 use core::{mem::MaybeUninit, result::Result};
+use spinlock::Spinlock;
 
-pub static ROOT_VFS: GlobalUninit<VirtualFileSystem> = Mutex::new(MaybeUninit::uninit());
+pub static ROOT_VFS: GlobalUninit<VirtualFileSystem> = Spinlock::new(MaybeUninit::uninit());
 
 pub fn vfs_init() {
     unsafe {

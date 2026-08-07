@@ -1,9 +1,21 @@
+#![no_std]
+
 use core::arch::asm;
 use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut},
     sync::atomic::{AtomicBool, Ordering},
 };
+
+fn disable_interrupts() {
+    unsafe {
+        #[cfg(target_arch = "aarch64")]
+        asm!("msr DAIFSet, #2");
+
+        #[cfg(target_arch = "riscv64")]
+        asm!("csrc sstatus, 2"); // unset SIE flag
+    }
+}
 
 fn irq_save() -> u64 {
     let irq: u64;
@@ -30,70 +42,54 @@ fn irq_load(irq: u64) {
     };
 }
 
-pub struct Mutex<T> {
+pub struct Spinlock<T> {
     locked: AtomicBool,
-    data: SyncUnsafeCell<T>,
+    data: UnsafeCell<T>,
 }
 
-impl<T> Mutex<T> {
+impl<T> Spinlock<T> {
     pub const fn new(data: T) -> Self {
         Self {
             locked: AtomicBool::new(false),
-            data: SyncUnsafeCell::new(data),
+            data: UnsafeCell::new(data),
         }
     }
-    pub fn lock(&self) -> MutexGuard<'_, T> {
+    pub fn lock(&self) -> SpinGuard<'_, T> {
         let irq = irq_save();
-        unsafe { crate::trap::disable_interrupts() };
+        disable_interrupts();
         while self.locked.swap(true, Ordering::Acquire) {
             core::hint::spin_loop();
         }
-        MutexGuard { mutex: self, irq }
+        SpinGuard { lock: self, irq }
     }
     fn unlock(&self) {
         self.locked.store(false, Ordering::Release);
     }
 }
 
-pub struct MutexGuard<'a, T> {
-    mutex: &'a Mutex<T>,
+unsafe impl<T: Send> Sync for Spinlock<T> {}
+
+pub struct SpinGuard<'a, T> {
+    lock: &'a Spinlock<T>,
     irq: u64,
 }
 
-impl<'a, T> Drop for MutexGuard<'a, T> {
+impl<'a, T> Drop for SpinGuard<'a, T> {
     fn drop(&mut self) {
-        self.mutex.unlock();
+        self.lock.unlock();
         irq_load(self.irq);
     }
 }
 
-impl<'a, T> Deref for MutexGuard<'a, T> {
+impl<'a, T> Deref for SpinGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.mutex.data.get() }
+        unsafe { &*self.lock.data.get() }
     }
 }
 
-impl<'a, T> DerefMut for MutexGuard<'a, T> {
+impl<'a, T> DerefMut for SpinGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.mutex.data.get() }
+        unsafe { &mut *self.lock.data.get() }
     }
 }
-
-#[repr(transparent)]
-pub struct SyncUnsafeCell<T> {
-    inner: UnsafeCell<T>,
-}
-
-impl<T> SyncUnsafeCell<T> {
-    pub const fn new(value: T) -> Self {
-        Self {
-            inner: UnsafeCell::new(value),
-        }
-    }
-    pub fn get(&self) -> *mut T {
-        self.inner.get()
-    }
-}
-
-unsafe impl<T: Send> Sync for SyncUnsafeCell<T> {}

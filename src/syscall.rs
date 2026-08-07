@@ -52,16 +52,16 @@ where
             current_task.copy_from_user(a1 as usize, &mut buf);
             Some(syscall_write(current_task, a0, &buf) as u64)
         },
-        SYSCALL_LSEEK => unsafe { Some(syscall_lseek(current_task, a0, a1) as u64) },
+        SYSCALL_LSEEK => Some(syscall_lseek(current_task, a0, a1) as u64),
         SYSCALL_CLOSE => unsafe {
             let mut buf = alloc::vec![0; a2 as usize];
             current_task.copy_from_user(a1 as usize, &mut buf);
             Some(syscall_close(current_task, a0) as u64)
         },
-        SYSCALL_SLEEP => unsafe {
+        SYSCALL_SLEEP => {
             syscall_sleep(current_task, a0);
             None
-        },
+        }
         _ => None,
     }
 }
@@ -109,7 +109,7 @@ where
     }
 }
 
-pub unsafe fn syscall_lseek<P>(current_task: &mut Task<P>, fd: u64, position: u64) -> isize
+pub fn syscall_lseek<P>(current_task: &mut Task<P>, fd: u64, position: u64) -> isize
 where
     P: Paging + Send,
 {
@@ -136,7 +136,7 @@ where
     }
 }
 
-pub unsafe fn syscall_sleep<P>(current_task: &mut Task<P>, timestamp: u64)
+pub fn syscall_sleep<P>(current_task: &mut Task<P>, timestamp: u64)
 where
     P: Paging + Send,
 {

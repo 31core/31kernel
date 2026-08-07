@@ -1,7 +1,7 @@
 /*! Types for global static variables. */
 
-use crate::mutex::Mutex;
 use core::mem::MaybeUninit;
+use spinlock::Spinlock;
 
 #[macro_export]
 macro_rules! lock {
@@ -17,5 +17,5 @@ macro_rules! lock_uinit {
     };
 }
 
-pub type Global<T> = Mutex<T>;
-pub type GlobalUninit<T> = Mutex<MaybeUninit<T>>;
+pub type Global<T> = Spinlock<T>;
+pub type GlobalUninit<T> = Spinlock<MaybeUninit<T>>;

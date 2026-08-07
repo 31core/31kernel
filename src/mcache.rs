@@ -2,9 +2,9 @@
  * An mcache allocator for small objects allocation.
  */
 
-use crate::{
-    alloc_pages, buddy_allocator::ceil_to_power_2, free_pages, mutex::Mutex, page::PAGE_SIZE,
-};
+use spinlock::Spinlock;
+
+use crate::{alloc_pages, buddy_allocator::ceil_to_power_2, free_pages, page::PAGE_SIZE};
 use core::{
     alloc::{GlobalAlloc, Layout},
     mem::size_of,
@@ -406,7 +406,7 @@ impl CacheManager {
 #[global_allocator]
 static mut GLOBAL_ALLOCATOR: GlobalAllocator = {
     GlobalAllocator {
-        inner: Mutex::new(CacheManager {
+        inner: Spinlock::new(CacheManager {
             caches: [None; CACHE_NUM],
             next: None,
             prev: None,
@@ -421,7 +421,7 @@ static mut GLOBAL_ALLOCATOR: GlobalAllocator = {
 
 #[repr(transparent)]
 pub struct GlobalAllocator {
-    inner: Mutex<CacheManager>,
+    inner: Spinlock<CacheManager>,
 }
 
 unsafe impl GlobalAlloc for GlobalAllocator {

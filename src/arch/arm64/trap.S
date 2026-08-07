@@ -13,7 +13,7 @@
         .set n1, n1 + 2
         .set n2, n2 + 2
     .endr
-    str x30, [sp, #(29 * 8)]
+    str x30, [sp, #(30 * 8)]
 
     /* save ELR_EL1 */
     mrs x9, ELR_EL1
@@ -44,7 +44,7 @@
         .set n1, n1 + 2
         .set n2, n2 + 2
     .endr
-    ldr x30, [sp, #(29 * 8)]
+    ldr x30, [sp, #(30 * 8)]
     add sp, sp, #(34 * 8)
 .endm
 

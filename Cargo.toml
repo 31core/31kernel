@@ -17,3 +17,4 @@ sha2 = { path = "crypto/sha2" }
 
 dtb = { path = "lib/dtb" }
 elf = { path = "lib/elf" }
+spinlock = { path = "lib/spinlock" }

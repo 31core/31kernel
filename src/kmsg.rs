@@ -2,7 +2,7 @@
  * Kernel debug message.
  */
 
-use crate::{device::CharDev, global::Global, mutex::Mutex};
+use crate::{device::CharDev, global::Global};
 use alloc::{
     boxed::Box,
     collections::VecDeque,
@@ -12,8 +12,9 @@ use core::{
     fmt::Result as FmtResult,
     fmt::{Display, Formatter},
 };
+use spinlock::Spinlock;
 
-pub static KMSG: Global<KernelMessage> = Mutex::new(KernelMessage::default());
+pub static KMSG: Global<KernelMessage> = Spinlock::new(KernelMessage::default());
 const KMSG_MAX: usize = 1024;
 
 #[macro_export]

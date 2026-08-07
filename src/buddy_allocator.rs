@@ -4,10 +4,10 @@
 
 use crate::{
     global::Global,
-    mutex::Mutex,
     page::{AllocError, PAGE_BITS, PAGE_SIZE, PageAllocator},
 };
 use core::ptr::NonNull;
+use spinlock::Spinlock;
 
 const NODE_COMPATIBILITY: usize = 512;
 const EXT_NODE_COMPATIBILITY: usize = 8196;
@@ -15,7 +15,7 @@ const MIN_POOL_REMAIN: usize = BUDDY_ALLOC_MAX_POW;
 const BUDDY_ALLOC_MAX_POW: usize = 48 - PAGE_BITS; // for 48-bit VA
 const MEM_ZONES: usize = 16;
 
-pub static BUDDY_ALLOCATOR: Global<BuddyAllocator> = Mutex::new(BuddyAllocator::default());
+pub static BUDDY_ALLOCATOR: Global<BuddyAllocator> = Spinlock::new(BuddyAllocator::default());
 
 #[derive(Debug, Clone, Copy)]
 /**
