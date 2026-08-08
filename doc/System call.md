@@ -35,3 +35,17 @@
 | 5    | close | File descriptor         | -          | -          | -            | `0` for success, `-1` for any error|
 | 6    | sleep | Timestamp  in nanosecond| -          | -          | -            | -            |
 | 7    | fork  | -          | -          | -          | -          | Child PID for parent process, `0` for child process|
+| 8    | uname | UTS buffer pointer      | -          | -          | -          | -          |
+
+## UTS struct
+
+The UTS struct used in `uname` syscall is defined as follow:
+```c
+struct utsname {
+    char sysname[65];
+    char nodename[65];
+    char release[65];
+    char version[65];
+    char machine[65];
+};
+```

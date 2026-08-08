@@ -12,6 +12,7 @@ pub const SYSCALL_LSEEK: u64 = 4;
 pub const SYSCALL_CLOSE: u64 = 5;
 pub const SYSCALL_SLEEP: u64 = 6;
 pub const SYSCALL_FORK: u64 = 7;
+pub const SYSCALL_UNAME: u64 = 8;
 
 pub const SYSCALL_RET_OK: isize = 0;
 pub const SYSCALL_RET_ERR: isize = -1;
@@ -24,6 +25,7 @@ pub const SYSCALL_RET_ERR: isize = -1;
  * * SYSCALL_LSEEK
  * * SYSCALL_CLOSE
  * * SYSCALL_SLEEP
+ * * SYSCALL_UNAME
  */
 pub fn dispatch_with_task<P>(
     current_task: &mut Task<P>,
@@ -60,6 +62,10 @@ where
         },
         SYSCALL_SLEEP => {
             syscall_sleep(current_task, a0);
+            None
+        }
+        SYSCALL_UNAME => {
+            syscall_uname(current_task, a0);
             None
         }
         _ => None,
@@ -142,4 +148,61 @@ where
 {
     let next_time = crate::time::get_sys_time() + timestamp;
     current_task.next_schedule = Some(next_time);
+}
+
+const UTS_STRING_LEN: usize = 65;
+
+#[repr(C)]
+struct Utsname {
+    sysname: [u8; UTS_STRING_LEN],
+    nodename: [u8; UTS_STRING_LEN],
+    release: [u8; UTS_STRING_LEN],
+    version: [u8; UTS_STRING_LEN],
+    machine: [u8; UTS_STRING_LEN],
+}
+
+impl Default for Utsname {
+    fn default() -> Self {
+        Utsname {
+            sysname: [0; UTS_STRING_LEN],
+            nodename: [0; UTS_STRING_LEN],
+            release: [0; UTS_STRING_LEN],
+            version: [0; UTS_STRING_LEN],
+            machine: [0; UTS_STRING_LEN],
+        }
+    }
+}
+
+const UNAME_SYSNAME: &[u8] = b"31kernel";
+const UNAME_RELEASE: &[u8] = b"0.1.0";
+
+#[cfg(debug_assertions)]
+const UNAME_VERSION: &[u8] = b"31kernel version 0.1.0 (Debug channel)";
+#[cfg(not(debug_assertions))]
+const UNAME_VERSION: &[u8] = b"31kernel version 0.1.0 (Release channel)";
+
+#[cfg(target_arch = "aarch64")]
+const UNAME_MACHINE: &[u8] = b"arm64";
+#[cfg(target_arch = "riscv64")]
+const UNAME_MACHINE: &[u8] = b"riscv64";
+#[cfg(target_arch = "x86_64")]
+const UNAME_MACHINE: &[u8] = b"x86_64";
+
+pub fn syscall_uname<P>(current_task: &mut Task<P>, uts_ptr: u64)
+where
+    P: Paging + Send,
+{
+    let mut uts = Utsname::default();
+    uts.sysname[..UNAME_SYSNAME.len()].copy_from_slice(UNAME_SYSNAME);
+    uts.release[..UNAME_RELEASE.len()].copy_from_slice(UNAME_RELEASE);
+    uts.version[..UNAME_VERSION.len()].copy_from_slice(UNAME_VERSION);
+    uts.machine[..UNAME_MACHINE.len()].copy_from_slice(UNAME_MACHINE);
+
+    let uts_bytes = unsafe {
+        core::slice::from_raw_parts(
+            core::ptr::addr_of!(uts) as *const u8,
+            core::mem::size_of_val(&uts),
+        )
+    };
+    current_task.copy_to_user(uts_ptr as usize, uts_bytes);
 }
