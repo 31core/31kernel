@@ -2,16 +2,15 @@
  * An mcache allocator for small objects allocation.
  */
 
-use spinlock::Spinlock;
-
 use crate::{alloc_pages, buddy_allocator::ceil_to_power_2, free_pages, page::PAGE_SIZE};
 use core::{
     alloc::{GlobalAlloc, Layout},
     mem::size_of,
     ptr::NonNull,
 };
+use spinlock::Spinlock;
 
-const CACHE_NUM: usize = 1024;
+const SLOT_NUM: usize = 1024;
 const SIZE_CLASS_COUNT: usize = 14;
 
 fn first_mgr(current: &CacheManager) -> &CacheManager {
@@ -122,7 +121,7 @@ struct CachePage {
 
 impl CachePage {
     /** Initialize cache on pages. */
-    unsafe fn init(&mut self, offset: usize) {
+    fn init(&mut self, offset: usize) {
         for i in 0..self.free_count - 1 {
             unsafe {
                 let ptr = self.page_start.add((offset + i) * self.cell_size);
@@ -138,7 +137,28 @@ impl CachePage {
             CacheCell { ptr }.write_next(core::ptr::null_mut());
         }
     }
-    unsafe fn alloc_obj(&mut self) -> Option<*mut u8> {
+    fn allocate(cell_size: usize, cell_count: usize) -> *mut Self {
+        let page_count = ceil_to_power_2(cell_count * cell_size / PAGE_SIZE);
+        let offset = size_of::<CachePage>().div_ceil(cell_size); // offest in n cells size
+        let cache_addr = (PAGE_SIZE * alloc_pages!(page_count)) as *mut CachePage;
+        let mut cache = CachePage {
+            page_start: cache_addr as *mut u8,
+            page_count,
+            cell_size,
+            used_count: 0,
+            free_count: page_count * PAGE_SIZE / cell_size - offset,
+            free_list_head: unsafe { (cache_addr).byte_add(offset * cell_size) as *mut u8 },
+        };
+        cache.init(offset);
+
+        unsafe { cache_addr.write(cache) };
+        cache_addr
+    }
+    /** free object cache */
+    fn deallocate(&self) {
+        free_pages!(self.page_start as usize / PAGE_SIZE, self.page_count);
+    }
+    fn alloc_obj(&mut self) -> Option<*mut u8> {
         if self.free_count == 0 {
             None
         } else {
@@ -156,7 +176,7 @@ impl CachePage {
             Some(alloc_addr)
         }
     }
-    unsafe fn free_obj(&mut self, ptr: *mut u8) {
+    fn free_obj(&mut self, ptr: *mut u8) {
         self.used_count -= 1;
         self.free_count += 1;
 
@@ -172,7 +192,7 @@ impl CachePage {
 
 pub struct CacheManager {
     /** Cache slots. */
-    caches: [Option<NonNull<CachePage>>; CACHE_NUM],
+    caches: [Option<NonNull<CachePage>>; SLOT_NUM],
     next: Option<NonNull<Self>>,
     prev: Option<NonNull<Self>>,
     /**
@@ -184,21 +204,19 @@ pub struct CacheManager {
     /** Next pointer of a linked table maintaining a list of `CacheManager`s with at least one free cache slots. */
     next_free: Option<NonNull<Self>>,
     /** Number of allocated cache slots. */
-    allocated_caches: usize,
-    is_init: bool,
+    used_slots: usize,
 }
 
 impl Default for CacheManager {
     fn default() -> Self {
         Self {
-            caches: [None; CACHE_NUM],
+            caches: [None; SLOT_NUM],
             next: None,
             prev: None,
             next_partial_free: [None; SIZE_CLASS_COUNT],
             partial_counts: [0; SIZE_CLASS_COUNT],
-            allocated_caches: 0,
+            used_slots: 0,
             next_free: None,
-            is_init: false,
         }
     }
 }
@@ -208,7 +226,7 @@ impl CacheManager {
         for cache in &mut self.caches {
             if cache.is_none() {
                 *cache = NonNull::new(cache_ptr);
-                self.allocated_caches += 1;
+                self.used_slots += 1;
                 break;
             }
         }
@@ -216,58 +234,67 @@ impl CacheManager {
 }
 
 impl CacheManager {
-    fn is_cache_full(&self) -> bool {
-        self.allocated_caches == CACHE_NUM
+    fn try_init_next(&mut self) {
+        if self.next.is_none() {
+            self.next = Some(NonNull::dangling()); // avoid recurssion
+            let next = self.alloc(Layout::new::<Self>()) as *mut Self;
+            self.next = NonNull::new(next);
+            unsafe {
+                next.write(Self {
+                    prev: NonNull::new(self as *mut Self),
+                    next_free: first_mgr(self).next_free,
+                    ..Default::default()
+                })
+            };
+            first_mgr_mut(self).next_free = NonNull::new(next);
+        }
+    }
+    fn is_slots_full(&self) -> bool {
+        self.used_slots == SLOT_NUM
     }
     fn is_global_allocator(&self) -> bool {
         self.prev.is_none() // only the first allocator has null previous pointer
     }
     /** Allocate an object using a free cache. */
-    unsafe fn cache_alloc(&mut self, cell_size: usize, idx: usize, padding: usize) -> *mut u8 {
-        unsafe {
-            for mut cache in self.caches.into_iter().flatten() {
-                if cache.as_ref().cell_size == cell_size
-                    && let Some(ptr) = cache.as_mut().alloc_obj()
-                {
-                    if cache.as_ref().free_count == 0 {
-                        self.partial_counts[idx] -= 1;
-                        /* delete current node from partial free list */
-                        if !self.is_global_allocator() && self.partial_counts[idx] == 0 {
-                            first_mgr_mut(self).next_partial_free[idx] =
-                                self.next_partial_free[idx];
-                        }
-                    }
-                    let obj = CacheCell { ptr };
-                    obj.write_head(self as *mut Self);
-                    return obj.object_ptr(padding);
-                }
-            }
-            unreachable!("No free cache found.");
+    fn cache_alloc(&mut self, cell_size: usize, idx: usize, padding: usize) -> Option<*mut u8> {
+        if self.partial_counts[idx] == 0 {
+            return None;
         }
+
+        for mut cache in self.caches.into_iter().flatten() {
+            let cache = unsafe { cache.as_mut() };
+            if cache.cell_size == cell_size
+                && let Some(ptr) = cache.alloc_obj()
+            {
+                if cache.free_count == 0 {
+                    self.partial_counts[idx] -= 1;
+                    /* delete current node from partial free list */
+                    if self.partial_counts[idx] == 0 {
+                        first_mgr_mut(self).next_partial_free[idx] = self.next_partial_free[idx];
+                    }
+                }
+                let obj = CacheCell { ptr };
+                unsafe { obj.write_head(self as *mut Self) };
+                return Some(obj.object_ptr(padding));
+            }
+        }
+
+        None
     }
     /** Add a new cache and allocate an object. */
-    unsafe fn new_cache_alloc(
+    fn new_cache_alloc(
         &mut self,
         cell_size: usize,
         cell_count: usize,
         idx: usize,
         padding: usize,
     ) -> *mut u8 {
+        self.try_init_next();
+
         unsafe {
-            let page_count = ceil_to_power_2(cell_count * cell_size / PAGE_SIZE);
-            let offset = size_of::<CachePage>().div_ceil(cell_size); // offest in n cells size
-            let cache_addr = (PAGE_SIZE * alloc_pages!(page_count)) as *mut CachePage;
-            let mut cache = CachePage {
-                page_start: cache_addr as *mut u8,
-                page_count,
-                cell_size,
-                used_count: 0,
-                free_count: page_count * PAGE_SIZE / cell_size - offset,
-                free_list_head: (cache_addr).byte_add(offset * cell_size) as *mut u8,
-            };
-            cache.init(offset);
+            let cache_addr = CachePage::allocate(cell_size, cell_count);
+            let cache = &mut *cache_addr;
             let ptr = cache.alloc_obj().unwrap();
-            cache_addr.write(cache);
 
             /* insert current manager to partial free list */
             if !self.is_global_allocator() && self.partial_counts[idx] == 0 {
@@ -279,7 +306,7 @@ impl CacheManager {
             self.partial_counts[idx] += 1;
 
             /* delete current manager from free list */
-            if !self.is_global_allocator() && self.is_cache_full() {
+            if self.is_slots_full() {
                 first_mgr_mut(self).next_free = self.next_free;
             }
 
@@ -288,31 +315,19 @@ impl CacheManager {
             cell.object_ptr(padding)
         }
     }
-    unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
+    fn alloc(&mut self, layout: Layout) -> *mut u8 {
         unsafe {
-            if !self.is_init {
-                self.is_init = true;
-                let next = self.alloc(Layout::new::<Self>()) as *mut Self;
-                self.next = NonNull::new(next);
-                next.write(Self {
-                    prev: NonNull::new(self as *mut Self),
-                    next_free: first_mgr(self).next_free,
-                    ..Default::default()
-                });
-                first_mgr_mut(self).next_free = NonNull::new(next);
-            }
-
             let padding = calc_header_padding(layout.align());
             let alloc_size = layout.size() + padding + size_of::<*mut Self>();
             /* allocate with cache manager */
             if let Some(((cell_size, cell_count), idx)) = size_to_class(alloc_size) {
-                if self.partial_counts[idx] > 0 {
-                    self.cache_alloc(cell_size, idx, padding)
-                } else if !self.is_cache_full() {
+                if let Some(ptr) = self.cache_alloc(cell_size, idx, padding) {
+                    ptr
+                } else if !self.is_slots_full() {
                     self.new_cache_alloc(cell_size, cell_count, idx, padding)
                 } else {
                     if let Some(mut next) = self.next_partial_free[idx] {
-                        next.as_mut().cache_alloc(cell_size, idx, padding)
+                        next.as_mut().cache_alloc(cell_size, idx, padding).unwrap()
                     } else {
                         self.next_free
                             .unwrap()
@@ -327,7 +342,7 @@ impl CacheManager {
             }
         }
     }
-    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+    fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
         let padding = calc_header_padding(layout.align());
         let alloc_size = layout.size() + padding + size_of::<*mut Self>();
         let first_mgr = first_mgr_mut(self);
@@ -357,26 +372,20 @@ impl CacheManager {
 
                         /* object cache is empty */
                         if cache.as_ref().used_count == 0 {
-                            /* free object cache */
-                            free_pages!(
-                                cache.as_ref().page_start as usize / PAGE_SIZE,
-                                cache.as_ref().page_count
-                            );
+                            cache.as_ref().deallocate();
                             *i = None;
 
                             /* insert the manager to free list */
-                            if !is_global && mgr.is_cache_full() {
+                            if !is_global && mgr.is_slots_full() {
                                 mgr.next_free = first_mgr.next_free;
                                 first_mgr.next_free = NonNull::new(mgr);
                             }
-                            mgr.allocated_caches -= 1;
+                            mgr.used_slots -= 1;
                             mgr.partial_counts[idx] -= 1;
 
                             /* free the manager */
-                            if !is_global
-                                && mgr.allocated_caches == 0
+                            if mgr.used_slots == 0
                                 && let Some(mut prev) = mgr.prev
-                                && /* do not dealloc the last allocator*/ mgr.next.is_some()
                             {
                                 prev.as_mut().next = mgr.next;
 
@@ -407,14 +416,13 @@ impl CacheManager {
 static mut GLOBAL_ALLOCATOR: GlobalAllocator = {
     GlobalAllocator {
         inner: Spinlock::new(CacheManager {
-            caches: [None; CACHE_NUM],
+            caches: [None; SLOT_NUM],
             next: None,
             prev: None,
             next_partial_free: [None; SIZE_CLASS_COUNT],
             partial_counts: [0; SIZE_CLASS_COUNT],
             next_free: None,
-            allocated_caches: 0,
-            is_init: false,
+            used_slots: 0,
         }),
     }
 };
@@ -426,9 +434,9 @@ pub struct GlobalAllocator {
 
 unsafe impl GlobalAlloc for GlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe { self.inner.lock().alloc(layout) }
+        self.inner.lock().alloc(layout)
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { self.inner.lock().dealloc(ptr, layout) };
+        self.inner.lock().dealloc(ptr, layout);
     }
 }
