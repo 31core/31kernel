@@ -23,7 +23,7 @@ const ESR_EC_DATA_ABORT: u64 = 0x24;
 
 /** switch to kernel page table */
 unsafe fn to_kernel_pt() {
-    let tbbrx_el1 = unsafe { (*(&raw mut KERNEL_PT)).assume_init() as u64 };
+    let tbbrx_el1 = unsafe { (*(&raw mut KERNEL_PT)).assume_init().0 as u64 };
     unsafe {
         set_ttbrx(tbbrx_el1);
         refresh_tlb();

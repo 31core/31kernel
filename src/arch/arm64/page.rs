@@ -2,7 +2,10 @@
  * VMSAv8-64 paging implementaion.
  */
 
-use crate::page::{PageACL, PageAllocator, Paging, ppn_to_vpn, va_to_pa, vpn_to_ppn};
+use crate::{
+    address::{PhysAddr, PhysPage, PhysicalPage, VirtAddr, VirtPage, VirtualAddress, VirtualPage},
+    page::{PAGE_BITS, PageACL, PageAllocator, Paging},
+};
 use core::arch::asm;
 
 const PTES_PER_DIR: usize = 512;
@@ -54,8 +57,8 @@ pub(super) unsafe fn refresh_tlb() {
 pub struct TableDescriptor(u64);
 
 impl TableDescriptor {
-    fn ppn(&self) -> u64 {
-        self.0 >> 12
+    fn ppn(&self) -> PhysPage {
+        PhysicalPage((self.0 >> 12) as usize)
     }
     fn is_leaf(&self) -> bool {
         self.0 & TYPE_TABLE_ENTRY == 0
@@ -70,9 +73,9 @@ pub struct PageTable {
 }
 
 impl PageTable {
-    fn from_pn(page_num: u64) -> Self {
+    fn from_pn(page_num: VirtPage) -> Self {
         Self {
-            ptes: (page_num << 12) as *mut TableDescriptor,
+            ptes: (page_num.0 << PAGE_BITS) as *mut TableDescriptor,
         }
     }
     pub fn set_descriptor(&self, index: usize, pte: TableDescriptor) {
@@ -95,8 +98,8 @@ impl PageTable {
         let td = unsafe { self.ptes.add(index).read_volatile() };
         if td.0 == 0 {
             /* descriptor is empty */
-            let ppn = vpn_to_ppn(alloc.alloc_pages(1).unwrap()) as u64;
-            let td = TableDescriptor(ppn << 12 | TYPE_VALID | TYPE_TABLE_ENTRY);
+            let ppn = PhysPage::from(VirtualPage(alloc.alloc_pages(1).unwrap()));
+            let td = TableDescriptor((ppn.0 << 12) as u64 | TYPE_VALID | TYPE_TABLE_ENTRY);
             self.set_descriptor(index, td);
 
             td
@@ -111,18 +114,18 @@ pub struct PageMapper {
 }
 
 impl PageMapper {
-    fn root_ppn(&self) -> u64 {
-        self.root.ptes as u64 >> 12
+    fn root_ppn(&self) -> PhysPage {
+        PhysicalPage(self.root.ptes as usize >> 12)
     }
-    pub fn from_ttbrx_el1(ttbrx_el1: u64) -> Self {
+    pub fn from_ttbrx_el1(ttbrx_el1: VirtAddr) -> Self {
         Self {
             root: PageTable {
-                ptes: ttbrx_el1 as *mut TableDescriptor,
+                ptes: ttbrx_el1.0 as *mut TableDescriptor,
             },
         }
     }
-    pub fn ttbrx_el1(&self) -> u64 {
-        va_to_pa(self.root.ptes as usize) as u64
+    pub fn ttbrx_el1(&self) -> PhysAddr {
+        VirtualAddress(self.root.ptes as usize).into()
     }
     unsafe fn map_4k<A>(&mut self, alloc: &mut A, vpn: usize, ppn: usize, mode: u64)
     where
@@ -135,13 +138,13 @@ impl PageMapper {
 
         let l0_td = unsafe { self.root.get_not_empty(alloc, l0) };
 
-        let l1_pt = PageTable::from_pn(ppn_to_vpn(l0_td.ppn() as usize) as u64);
+        let l1_pt = PageTable::from_pn(VirtPage::from(l0_td.ppn()));
         let l1_td = unsafe { l1_pt.get_not_empty(alloc, l1) };
 
-        let l2_pt = PageTable::from_pn(ppn_to_vpn(l1_td.ppn() as usize) as u64);
+        let l2_pt = PageTable::from_pn(VirtPage::from(l1_td.ppn()));
         let l2_td = unsafe { l2_pt.get_not_empty(alloc, l2) };
 
-        let l3_pt = PageTable::from_pn(ppn_to_vpn(l2_td.ppn() as usize) as u64);
+        let l3_pt = PageTable::from_pn(VirtPage::from(l2_td.ppn()));
         l3_pt.set_descriptor(
             l3,
             TableDescriptor((ppn as u64) << 12 | TYPE_VALID | TYPE_PAGE_ENTRY | mode),
@@ -155,13 +158,13 @@ impl PageMapper {
 
         let l0_td = unsafe { self.root.ptes.add(l0).read_volatile() };
 
-        let l1_pt = PageTable::from_pn(ppn_to_vpn(l0_td.ppn() as usize) as u64);
+        let l1_pt = PageTable::from_pn(VirtPage::from(l0_td.ppn()));
         let l1_td = unsafe { l1_pt.ptes.add(l1).read_volatile() };
 
-        let l2_pt = PageTable::from_pn(ppn_to_vpn(l1_td.ppn() as usize) as u64);
+        let l2_pt = PageTable::from_pn(VirtPage::from(l1_td.ppn()));
         let l2_td = unsafe { l2_pt.ptes.add(l2).read_volatile() };
 
-        let l3_pt = PageTable::from_pn(ppn_to_vpn(l2_td.ppn() as usize) as u64);
+        let l3_pt = PageTable::from_pn(VirtPage::from(l2_td.ppn()));
         l3_pt.set_descriptor(l3, TableDescriptor(0));
     }
 }
@@ -173,7 +176,7 @@ impl Paging for PageMapper {
     where
         A: PageAllocator,
     {
-        let root_pdir = alloc.alloc_pages(1).unwrap() as u64;
+        let root_pdir = VirtualPage(alloc.alloc_pages(1).unwrap());
         Self {
             root: PageTable::from_pn(root_pdir),
         }
@@ -224,7 +227,7 @@ impl Paging for PageMapper {
     }
     unsafe fn switch_to(&self) {
         unsafe {
-            set_ttbrx(self.ttbrx_el1());
+            set_ttbrx(self.ttbrx_el1().0 as u64);
             mmu_enable();
         }
     }
@@ -242,26 +245,26 @@ impl Paging for PageMapper {
             if !l0_td.is_valid() {
                 continue;
             }
-            let l1_pt = PageTable::from_pn(ppn_to_vpn(l0_td.ppn() as usize) as u64);
+            let l1_pt = PageTable::from_pn(VirtPage::from(l0_td.ppn()));
 
             for l1 in 0..PTES_PER_DIR {
                 let l1_td: TableDescriptor = unsafe { l1_pt.ptes.add(l1).read_volatile() };
                 if !l1_td.is_valid() {
                     continue;
                 }
-                let l2_pt = PageTable::from_pn(ppn_to_vpn(l1_td.ppn() as usize) as u64);
+                let l2_pt = PageTable::from_pn(VirtPage::from(l1_td.ppn()));
 
                 for l2 in 0..PTES_PER_DIR {
                     let l2_td: TableDescriptor = unsafe { l2_pt.ptes.add(l2).read_volatile() };
                     /* point to l3 table */
                     if !l2_td.is_leaf() && l2_td.is_valid() {
-                        alloc.free_pages(ppn_to_vpn(l2_td.ppn() as usize), 1);
+                        alloc.free_pages(VirtPage::from(l2_td.ppn()).0, 1);
                     }
                 }
-                alloc.free_pages(ppn_to_vpn(l1_td.ppn() as usize), 1);
+                alloc.free_pages(VirtPage::from(l1_td.ppn()).0, 1);
             }
-            alloc.free_pages(ppn_to_vpn(l0_td.ppn() as usize), 1);
+            alloc.free_pages(VirtPage::from(l0_td.ppn()).0, 1);
         }
-        alloc.free_pages(ppn_to_vpn(self.root_ppn() as usize), 1);
+        alloc.free_pages(VirtPage::from(self.root_ppn()).0, 1);
     }
 }

@@ -2,14 +2,15 @@
  * Multi-tasking structures, including task scheduler, task structure.
  */
 
-use crate::{alloc_pages, free_pages};
 use crate::{
+    address::{PhysPage, VirtPage, VirtualPage},
     arch::{Context, PageMapper},
     buddy_allocator::ceil_to_power_2,
     global::GlobalUninit,
-    page::{KERNEL_PT, PAGE_SIZE, Paging, ppn_to_vpn, vpn_to_ppn},
+    page::{KERNEL_PT, PAGE_BITS, PAGE_SIZE, Paging},
     vfs::VfsFile,
 };
+use crate::{alloc_pages, free_pages};
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     string::{String, ToString},
@@ -34,7 +35,7 @@ where
     pub vruntime: BTreeSet<(usize, usize)>,
     current_pid: usize,
     max_pid: usize,
-    trap_stack: usize,
+    trap_stack: VirtPage,
 }
 
 impl<P> Scheduler<P>
@@ -45,40 +46,40 @@ where
         let elf = Elf::parse(elf_bytes)?;
 
         let mut page = unsafe { P::new() };
-        let stack = alloc_pages!(USER_STACK_PAGES);
+        let stack = VirtualPage(alloc_pages!(USER_STACK_PAGES));
         unsafe {
             page.map_kernel_region();
-            page.map_data(self.trap_stack, vpn_to_ppn(self.trap_stack), 16);
-            page.map_data_u(stack, vpn_to_ppn(stack), USER_STACK_PAGES);
+            page.map_data(self.trap_stack.0, PhysPage::from(self.trap_stack).0, 16);
+            page.map_data_u(stack.0, PhysPage::from(stack).0, USER_STACK_PAGES);
         }
         let mut page_allocs = Vec::new();
         page_allocs.push(Arc::new((
-            stack,
-            vpn_to_ppn(stack),
+            stack.0,
+            PhysPage::from(stack),
             USER_STACK_PAGES,
             alloc::vec![PFlags::Read, PFlags::Write],
         )));
 
         for prog in &elf.p_headers {
             if let PType::Load = prog.p_type {
-                let v_page = prog.v_addr / PAGE_SIZE;
+                let v_page = prog.v_addr >> PAGE_BITS;
                 let v_pages = prog.p_memsz.div_ceil(PAGE_SIZE);
 
-                let p_page = vpn_to_ppn(alloc_pages!(ceil_to_power_2(v_pages)));
+                let p_page = PhysPage::from(VirtualPage(alloc_pages!(ceil_to_power_2(v_pages))));
                 page_allocs.push(Arc::new((v_page, p_page, v_pages, prog.p_flags.to_vec())));
                 if prog.p_flags.contains(&PFlags::Exec) {
-                    unsafe { page.map_text_u(v_page, p_page, v_pages) };
+                    unsafe { page.map_text_u(v_page, p_page.0, v_pages) };
                 } else if prog.p_flags.contains(&PFlags::Write) {
-                    unsafe { page.map_data_u(v_page, p_page, v_pages) };
+                    unsafe { page.map_data_u(v_page, p_page.0, v_pages) };
                 } else {
-                    unsafe { page.map_rodata_u(v_page, p_page, v_pages) };
+                    unsafe { page.map_rodata_u(v_page, p_page.0, v_pages) };
                 }
 
-                let p_off = prog.v_addr % PAGE_SIZE; // offset to start of the page
+                let p_off = prog.v_addr & (PAGE_SIZE - 1); // offset to start of the page
                 unsafe {
                     core::ptr::copy(
                         elf_bytes[prog.p_offset..].as_ptr(),
-                        (ppn_to_vpn(p_page) * PAGE_SIZE + p_off) as *mut u8,
+                        (VirtPage::from(p_page).0 * PAGE_SIZE + p_off) as *mut u8,
                         prog.p_filesz,
                     )
                 };
@@ -90,16 +91,16 @@ where
         #[cfg(target_arch = "riscv64")]
         {
             context.epc = elf.e_entry as u64;
-            context.x[2] = ((stack + USER_STACK_PAGES) * PAGE_SIZE) as u64; // sp
+            context.x[2] = ((stack.0 + USER_STACK_PAGES) << PAGE_BITS) as u64; // sp
         }
         #[cfg(target_arch = "aarch64")]
         {
             context.elr_el1 = elf.e_entry as u64;
-            context.sp = ((stack + USER_STACK_PAGES) * PAGE_SIZE) as u64;
+            context.sp = ((stack.0 + USER_STACK_PAGES) << PAGE_BITS) as u64;
         }
         #[cfg(target_arch = "x86_64")]
         {
-            context.rsp = ((stack + USER_STACK_PAGES) * PAGE_SIZE) as u64;
+            context.rsp = ((stack.0 + USER_STACK_PAGES) << PAGE_BITS) as u64;
         }
 
         self.max_pid += 1;
@@ -176,7 +177,7 @@ where
         let mut page = unsafe { P::new() };
         unsafe {
             page.map_kernel_region();
-            page.map_data(self.trap_stack, vpn_to_ppn(self.trap_stack), 16);
+            page.map_data(self.trap_stack.0, PhysPage::from(self.trap_stack).0, 16);
         }
         let mut page_allocs = Vec::new();
 
@@ -184,21 +185,21 @@ where
             let (v_page, p_page, v_pages, flags) = alloc.as_ref();
 
             if flags.contains(&PFlags::Exec) {
-                unsafe { page.map_text_u(*v_page, *p_page, *v_pages) };
+                unsafe { page.map_text_u(*v_page, p_page.0, *v_pages) };
                 page_allocs.push(Arc::clone(alloc));
             } else if flags.contains(&PFlags::Write) {
-                let p_page = vpn_to_ppn(alloc_pages!(ceil_to_power_2(*v_pages)));
+                let p_page = PhysPage::from(VirtualPage(alloc_pages!(ceil_to_power_2(*v_pages))));
                 page_allocs.push(Arc::new((*v_page, p_page, *v_pages, flags.clone())));
                 unsafe {
-                    page.map_data_u(*v_page, p_page, *v_pages);
+                    page.map_data_u(*v_page, p_page.0, *v_pages);
                     core::ptr::copy(
-                        (*v_page * PAGE_SIZE) as *const u8,
-                        (ppn_to_vpn(p_page) * PAGE_SIZE) as *mut u8,
-                        *v_pages * PAGE_SIZE,
+                        (*v_page << PAGE_BITS) as *const u8,
+                        (VirtPage::from(p_page).0 << PAGE_BITS) as *mut u8,
+                        *v_pages << PAGE_BITS,
                     );
                 }
             } else {
-                unsafe { page.map_rodata_u(*v_page, *p_page, *v_pages) };
+                unsafe { page.map_rodata_u(*v_page, p_page.0, *v_pages) };
                 page_allocs.push(Arc::clone(alloc));
             }
         }
@@ -250,7 +251,7 @@ const NICE_DEFAULT: isize = 0;
 const NICE_MAX: isize = 19;
 const NICE_MIN: isize = -20;
 
-type PageAllocInfo = Arc<(usize, usize, usize, Vec<PFlags>)>; // (v_page, p_page, v_pages, flags)
+type PageAllocInfo = Arc<(usize, PhysPage, usize, Vec<PFlags>)>; // (v_page, p_page, v_pages, flags)
 
 pub struct Task<P>
 where
@@ -285,17 +286,20 @@ where
     }
     /**
      * Returns the length of copied bytes.
+     *
+     * Requirements:
+     * * Switched to kernel's page table.
      */
     pub fn copy_from_user(&self, mut user_addr: usize, mut kernel_buf: &mut [u8]) -> usize {
         let buf_size = kernel_buf.len();
         'main: while !kernel_buf.is_empty() {
             for alloc in &self.page_allocs {
                 let (vpage, p_page, page_count, _flags) = alloc.as_ref();
-                if user_addr >= vpage * PAGE_SIZE && user_addr < (vpage + page_count) * PAGE_SIZE {
-                    let mut offset = user_addr - vpage * PAGE_SIZE;
-                    while !kernel_buf.is_empty() && offset < page_count * PAGE_SIZE {
+                if (*vpage..vpage + page_count).contains(&(user_addr >> PAGE_BITS)) {
+                    let mut offset = user_addr - (vpage << PAGE_BITS);
+                    while !kernel_buf.is_empty() && offset < page_count << PAGE_BITS {
                         kernel_buf[0] = unsafe {
-                            ((ppn_to_vpn(*p_page) * PAGE_SIZE + offset) as *const u8).read()
+                            ((VirtPage::from(*p_page).0 * PAGE_SIZE + offset) as *const u8).read()
                         };
                         kernel_buf = &mut kernel_buf[1..];
                         offset += 1;
@@ -303,7 +307,7 @@ where
                     if kernel_buf.is_empty() {
                         break 'main;
                     } else {
-                        user_addr = (vpage + page_count) * PAGE_SIZE;
+                        user_addr = (vpage + page_count) << PAGE_BITS;
                         continue 'main;
                     }
                 }
@@ -314,17 +318,20 @@ where
     }
     /**
      * Returns the length of copied bytes.
+     *
+     * Requirements:
+     * * Switched to kernel's page table.
      */
     pub fn copy_to_user(&self, mut user_addr: usize, mut kernel_buf: &[u8]) -> usize {
         let buf_size = kernel_buf.len();
         'main: while !kernel_buf.is_empty() {
             for alloc in &self.page_allocs {
                 let (vpage, p_page, page_count, _flags) = alloc.as_ref();
-                if user_addr >= vpage * PAGE_SIZE && user_addr < (vpage + page_count) * PAGE_SIZE {
-                    let mut offset = user_addr - vpage * PAGE_SIZE;
-                    while !kernel_buf.is_empty() && offset < page_count * PAGE_SIZE {
+                if (*vpage..vpage + page_count).contains(&(user_addr >> PAGE_BITS)) {
+                    let mut offset = user_addr - (vpage << PAGE_BITS);
+                    while !kernel_buf.is_empty() && offset < page_count << PAGE_BITS {
                         unsafe {
-                            ((ppn_to_vpn(*p_page) * PAGE_SIZE + offset) as *mut u8)
+                            ((VirtPage::from(*p_page).0 * PAGE_SIZE + offset) as *mut u8)
                                 .write(kernel_buf[0]);
                         };
                         kernel_buf = &kernel_buf[1..];
@@ -333,7 +340,7 @@ where
                     if kernel_buf.is_empty() {
                         break 'main;
                     } else {
-                        user_addr = (vpage + page_count) * PAGE_SIZE;
+                        user_addr = (vpage + page_count) << PAGE_BITS;
                         continue 'main;
                     }
                 }
@@ -371,27 +378,29 @@ where
         for alloc in &mut self.page_allocs {
             let (_vpage, p_page, page_count, _flags) = alloc.as_ref();
             if Arc::strong_count(alloc) == 1 {
-                free_pages!(ppn_to_vpn(*p_page), ceil_to_power_2(*page_count));
+                free_pages!(VirtPage::from(*p_page).0, ceil_to_power_2(*page_count));
             }
         }
     }
 }
 
 pub fn task_init() {
-    let trap_stack = alloc_pages!(16);
+    let trap_stack = VirtualPage(alloc_pages!(16));
     unsafe {
         crate::trap::trap_stack_init(trap_stack);
     }
 
     #[cfg(target_arch = "riscv64")]
     let kernel_page = unsafe {
-        use crate::page::ppn_to_vpn;
-        PageMapper::from_pn(ppn_to_vpn(KERNEL_PT.assume_init()) as u64)
+        use crate::address::VirtAddr;
+        PageMapper::from_pn(VirtualPage(
+            VirtAddr::from(KERNEL_PT.assume_init()).0 >> PAGE_BITS,
+        ))
     };
     #[cfg(target_arch = "aarch64")]
     let kernel_page = unsafe {
-        use crate::page::pa_to_va;
-        PageMapper::from_ttbrx_el1(pa_to_va(KERNEL_PT.assume_init()) as u64)
+        use crate::address::VirtAddr;
+        PageMapper::from_ttbrx_el1(VirtAddr::from(KERNEL_PT.assume_init()))
     };
     let kernel_task = Task {
         page: kernel_page,

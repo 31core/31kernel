@@ -2,7 +2,10 @@
  * SV39 paging implementaion.
  */
 
-use crate::page::{PAGE_SIZE, PageACL, PageAllocator, Paging, ppn_to_vpn, vpn_to_ppn};
+use crate::{
+    address::{PhysPage, PhysicalPage, VirtPage, VirtualPage},
+    page::{PAGE_BITS, PAGE_SIZE, PageACL, PageAllocator, Paging},
+};
 use alloc::vec::Vec;
 use core::arch::asm;
 
@@ -67,8 +70,8 @@ impl PageTableEntry {
     fn u(&self) -> bool {
         self.0 & PTE_U_FLAG != 0
     }
-    fn ppn(&self) -> u64 {
-        self.0 >> 10
+    fn ppn(&self) -> PhysPage {
+        PhysicalPage(self.0 as usize >> 10)
     }
     fn is_leaf(&self) -> bool {
         self.r() || self.w() || self.x()
@@ -80,9 +83,9 @@ pub struct PageTable {
 }
 
 impl PageTable {
-    fn from_pn(page_num: u64) -> Self {
+    fn from_pn(page_num: VirtPage) -> Self {
         Self {
-            ptes: (page_num << 12) as *mut PageTableEntry,
+            ptes: (page_num.0 << PAGE_BITS) as *mut PageTableEntry,
         }
     }
     pub fn set_pte(&self, index: usize, pte: PageTableEntry) {
@@ -105,8 +108,8 @@ impl PageTable {
         let pte = unsafe { self.ptes.add(index).read_volatile() };
         if pte.0 == 0 {
             /* PTE is empty */
-            let ppn = vpn_to_ppn(alloc.alloc_pages(1).unwrap()) as u64;
-            let pte = PageTableEntry(ppn << 10 | PTE_V_FLAG);
+            let ppn: PhysPage = VirtualPage(alloc.alloc_pages(1).unwrap()).into();
+            let pte = PageTableEntry((ppn.0 as u64) << 10 | PTE_V_FLAG);
             self.set_pte(index, pte);
 
             pte
@@ -121,13 +124,13 @@ pub struct PageMapper {
 }
 
 impl PageMapper {
-    pub fn from_pn(root_pt: u64) -> Self {
+    pub fn from_pn(root_pt: VirtPage) -> Self {
         Self {
             root: PageTable::from_pn(root_pt),
         }
     }
-    pub fn root_ppn(&self) -> u64 {
-        vpn_to_ppn(self.root.ptes as usize >> 12) as u64
+    pub fn root_ppn(&self) -> PhysPage {
+        PhysPage::from(VirtualPage(self.root.ptes as usize >> PAGE_BITS))
     }
     unsafe fn map_4k<A>(&mut self, alloc: &mut A, vpn: usize, ppn: usize, mode: u64)
     where
@@ -139,10 +142,10 @@ impl PageMapper {
 
         let l2_pte = unsafe { self.root.get_not_empty(alloc, l2) };
 
-        let l1_pt = PageTable::from_pn(ppn_to_vpn(l2_pte.ppn() as usize) as u64);
+        let l1_pt = PageTable::from_pn(VirtPage::from(l2_pte.ppn()));
         let l1_pte = unsafe { l1_pt.get_not_empty(alloc, l1) };
 
-        let l0_pt = PageTable::from_pn(ppn_to_vpn(l1_pte.ppn() as usize) as u64);
+        let l0_pt = PageTable::from_pn(VirtPage::from(l1_pte.ppn()));
         let l0_pte = PageTableEntry((ppn as u64) << 10 | mode);
         l0_pt.set_pte(l0, l0_pte);
     }
@@ -155,11 +158,11 @@ impl PageMapper {
 
         let l2_pte = unsafe { self.root.get_not_empty(alloc, l2) };
 
-        let l1_pt = PageTable::from_pn(ppn_to_vpn(l2_pte.ppn() as usize) as u64);
+        let l1_pt = PageTable::from_pn(VirtPage::from(l2_pte.ppn()));
         /* release l0 page table if exists. */
         let l1_pte = unsafe { l1_pt.ptes.add(l1).read_volatile() };
-        if !l1_pte.is_leaf() && l1_pte.ppn() > 0 {
-            alloc.free_pages(l1_pte.ppn() as usize, 1);
+        if !l1_pte.is_leaf() && l1_pte.ppn().0 > 0 {
+            alloc.free_pages(VirtPage::from(l1_pte.ppn()).0, 1);
         }
         let l1_pte = PageTableEntry((ppn as u64) << 10 | mode);
         l1_pt.set_pte(l1, l1_pte);
@@ -173,7 +176,7 @@ impl PageMapper {
         let l0 = vpn & 0x1ff;
 
         let l2_pte: PageTableEntry = unsafe { self.root.ptes.add(l2).read_volatile() };
-        let l1_pt = PageTable::from_pn(ppn_to_vpn(l2_pte.ppn() as usize) as u64);
+        let l1_pt = PageTable::from_pn(VirtPage::from(l2_pte.ppn()));
         let l1_pte: PageTableEntry = unsafe { l1_pt.ptes.add(l1).read_volatile() };
 
         unsafe { l1_pt.ptes.add(l0).write_volatile(PageTableEntry(0)) };
@@ -183,14 +186,14 @@ impl PageMapper {
          */
 
         /* remap 4kb pages before `vpn` if vpn is not the start of the 2mb page */
-        unsafe { self.map(vpn - l0, l1_pte.ppn() as usize, l0, &l1_pte.mode()) };
+        unsafe { self.map(vpn - l0, l1_pte.ppn().0, l0, &l1_pte.mode()) };
 
         if pages < PTES_PER_DIR - l0 {
             /* remap 4kb pages after `vpn` + `pages` */
             unsafe {
                 self.map(
                     vpn + pages,
-                    l1_pte.ppn() as usize + l0 + pages,
+                    l1_pte.ppn().0 + l0 + pages,
                     PTES_PER_DIR - l0 - pages,
                     &l1_pte.mode(),
                 );
@@ -199,7 +202,7 @@ impl PageMapper {
         } else {
             if l1_pt.is_empty() {
                 unsafe {
-                    alloc.free_pages(ppn_to_vpn(l2_pte.ppn() as usize), 1);
+                    alloc.free_pages(VirtPage::from(l2_pte.ppn()).0, 1);
                     self.root.ptes.add(l2).write_volatile(PageTableEntry(0));
                 }
             }
@@ -215,7 +218,7 @@ impl Paging for PageMapper {
     where
         A: PageAllocator,
     {
-        let root_pt = alloc.alloc_pages(1).unwrap() as u64;
+        let root_pt = VirtualPage(alloc.alloc_pages(1).unwrap());
         Self {
             root: PageTable::from_pn(root_pt),
         }
@@ -269,7 +272,7 @@ impl Paging for PageMapper {
             let l0 = vpn & 0x1ff;
 
             let l2_pte: PageTableEntry = unsafe { self.root.ptes.add(l2).read_volatile() };
-            let l1_pt = PageTable::from_pn(ppn_to_vpn(l2_pte.ppn() as usize) as u64);
+            let l1_pt = PageTable::from_pn(VirtPage::from(l2_pte.ppn()));
             let l1_pte: PageTableEntry = unsafe { l1_pt.ptes.add(l1).read_volatile() };
             /* 2MiB huge page */
             if !l1_pte.is_leaf() {
@@ -279,18 +282,18 @@ impl Paging for PageMapper {
                 continue;
             }
 
-            let l0_pt = PageTable::from_pn(ppn_to_vpn(l1_pte.ppn() as usize) as u64);
+            let l0_pt = PageTable::from_pn(VirtPage::from(l1_pte.ppn()));
             unsafe { l0_pt.ptes.add(l0).write_volatile(PageTableEntry(0)) };
             if l0_pt.is_empty() {
                 unsafe {
-                    alloc.free_pages(ppn_to_vpn(l1_pte.ppn() as usize), 1);
+                    alloc.free_pages(VirtPage::from(l1_pte.ppn()).0, 1);
                     l1_pt.ptes.add(l1).write_volatile(PageTableEntry(0));
                 }
             }
 
             if l1_pt.is_empty() {
                 unsafe {
-                    alloc.free_pages(ppn_to_vpn(l2_pte.ppn() as usize), 1);
+                    alloc.free_pages(VirtPage::from(l2_pte.ppn()).0, 1);
                     self.root.ptes.add(l2).write_volatile(PageTableEntry(0));
                 }
             }
@@ -299,7 +302,7 @@ impl Paging for PageMapper {
         }
     }
     unsafe fn switch_to(&self) {
-        unsafe { set_satp(self.root_ppn(), MODE_SV39) };
+        unsafe { set_satp(self.root_ppn().0 as u64, MODE_SV39) };
     }
     unsafe fn refresh(&self) {
         unsafe { asm!("sfence.vma") };
@@ -313,17 +316,17 @@ impl Paging for PageMapper {
             if !l2_pte.v() {
                 continue;
             }
-            let l1_pt = PageTable::from_pn(ppn_to_vpn(l2_pte.ppn() as usize) as u64);
+            let l1_pt = PageTable::from_pn(VirtPage::from(l2_pte.ppn()));
 
             for l1 in 0..PTES_PER_DIR {
                 let l1_pte: PageTableEntry = unsafe { l1_pt.ptes.add(l1).read_volatile() };
                 /* point to l0 table */
                 if !l1_pte.is_leaf() && l1_pte.v() {
-                    alloc.free_pages(ppn_to_vpn(l1_pte.ppn() as usize), 1);
+                    alloc.free_pages(VirtPage::from(l1_pte.ppn()).0, 1);
                 }
             }
-            alloc.free_pages(ppn_to_vpn(l2_pte.ppn() as usize), 1);
+            alloc.free_pages(VirtPage::from(l2_pte.ppn()).0, 1);
         }
-        alloc.free_pages(ppn_to_vpn(self.root_ppn() as usize), 1);
+        alloc.free_pages(VirtPage::from(self.root_ppn()).0, 1);
     }
 }

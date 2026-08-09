@@ -1,7 +1,7 @@
 use super::cpu::Context;
 use crate::{
     arch::riscv64::{page::MODE_SV39, *},
-    page::{KERNEL_PT, Paging},
+    page::{KERNEL_PT, PAGE_BITS, Paging},
     task::{SCHEDULER, Scheduler, Task},
 };
 use core::arch::{asm, global_asm};
@@ -42,7 +42,7 @@ pub unsafe extern "C" fn mtrap_handler(ctx: &mut Context) -> &mut Context {
 }
 
 unsafe fn to_kernel_pt() {
-    let kernel_ppn = unsafe { (*(&raw mut KERNEL_PT)).assume_init() as u64 };
+    let kernel_ppn = unsafe { (*(&raw mut KERNEL_PT)).assume_init().0 as u64 >> PAGE_BITS };
     let satp = kernel_ppn | (MODE_SV39 << 60);
     unsafe {
         asm!("csrw satp, {}", in(reg) satp);

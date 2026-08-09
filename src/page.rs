@@ -1,14 +1,18 @@
 //! Common code for page management
 
-use crate::buddy_allocator::BUDDY_ALLOCATOR;
+use crate::{
+    address::{PhysAddr, VirtualAddress},
+    buddy_allocator::BUDDY_ALLOCATOR,
+};
 use core::{mem::MaybeUninit, ptr::addr_of};
 
-pub static mut KERNEL_PT: MaybeUninit<usize> = MaybeUninit::uninit();
+pub static mut KERNEL_PT: MaybeUninit<PhysAddr> = MaybeUninit::uninit();
 
 pub const PAGE_BITS: usize = 12;
+pub const VA_BITS: usize = 48;
 pub const PAGE_SIZE: usize = 1 << PAGE_BITS;
-const VIRT_ADDR: usize = 0xffffffc040000000;
-const PHY_ADDR: usize = 0x40000000;
+pub const VIRT_ADDR: usize = 0xffffffc040000000;
+pub const PHY_ADDR: usize = 0x40000000;
 
 const RO: &[PageACL] = &[PageACL::Read];
 const RW: &[PageACL] = &[PageACL::Read, PageACL::Write];
@@ -28,9 +32,9 @@ pub enum PageACL {
 macro_rules! map_range {
     ($start:expr, $end:expr, $mgr:expr, $map_fn:ident) => {
         $mgr.$map_fn(
-            (addr_of!($start) as usize / PAGE_SIZE),
-            vpn_to_ppn(addr_of!($start) as usize / PAGE_SIZE),
-            (addr_of!($end) as usize / PAGE_SIZE) - (addr_of!($start) as usize / PAGE_SIZE),
+            addr_of!($start) as usize >> PAGE_BITS,
+            PhysAddr::from(VirtualAddress(addr_of!($start) as usize)).0 >> PAGE_BITS,
+            (addr_of!($end) as usize >> PAGE_BITS) - (addr_of!($start) as usize >> PAGE_BITS),
         );
     };
 }
@@ -39,9 +43,9 @@ macro_rules! map_range_with_alloc {
     ($alloc:ident, $start:expr, $end:expr, $mgr:expr, $mode:expr) => {
         $mgr.map_with_allocator(
             $alloc,
-            (addr_of!($start) as usize / PAGE_SIZE),
-            vpn_to_ppn(addr_of!($start) as usize / PAGE_SIZE),
-            (addr_of!($end) as usize / PAGE_SIZE) - (addr_of!($start) as usize / PAGE_SIZE),
+            addr_of!($start) as usize >> PAGE_BITS,
+            PhysAddr::from(VirtualAddress(addr_of!($start) as usize)).0 >> PAGE_BITS,
+            (addr_of!($end) as usize >> PAGE_BITS) - (addr_of!($start) as usize >> PAGE_BITS),
             $mode,
         );
     };
@@ -63,30 +67,6 @@ macro_rules! free_pages {
         let allocator_guard = &mut *BUDDY_ALLOCATOR.lock();
         allocator_guard.free_pages($pages_start, $pages_count)
     }};
-}
-
-/* Virtual page number to physical page number */
-pub fn vpn_to_ppn(vpn: usize) -> usize {
-    let delta = (VIRT_ADDR - PHY_ADDR) / PAGE_SIZE;
-    vpn - delta
-}
-
-/* Physical page number to virtual page number */
-pub fn ppn_to_vpn(ppn: usize) -> usize {
-    let delta = (VIRT_ADDR - PHY_ADDR) / PAGE_SIZE;
-    ppn + delta
-}
-
-/* Virtual address to physical address */
-pub fn va_to_pa(va: usize) -> usize {
-    let delta = VIRT_ADDR - PHY_ADDR;
-    va - delta
-}
-
-/* Physical address to virtual address */
-pub fn pa_to_va(pa: usize) -> usize {
-    let delta = VIRT_ADDR - PHY_ADDR;
-    pa + delta
 }
 
 pub trait PageAllocator {
@@ -248,9 +228,9 @@ pub fn kernel_pt_init() {
         kernel_page.map_kernel_region_bootstrap();
         kernel_page.map_with_allocator(
             alloc,
-            addr_of!(crate::HEAP_START) as usize / PAGE_SIZE,
-            vpn_to_ppn(addr_of!(crate::HEAP_START) as usize / PAGE_SIZE),
-            crate::MEM_SIZE / PAGE_SIZE,
+            addr_of!(crate::HEAP_START) as usize >> PAGE_BITS,
+            PhysAddr::from(VirtualAddress(addr_of!(crate::HEAP_START) as usize)).0 >> PAGE_BITS,
+            crate::MEM_SIZE >> PAGE_BITS,
             &[PageACL::Read, PageACL::Write],
         );
         kernel_page.switch_to();
@@ -258,12 +238,14 @@ pub fn kernel_pt_init() {
 
         #[cfg(target_arch = "riscv64")]
         {
-            KERNEL_PT = MaybeUninit::new(kernel_page.root_ppn() as usize);
+            use crate::address::PhysicalAddress;
+
+            KERNEL_PT = MaybeUninit::new(PhysicalAddress(kernel_page.root_ppn().0 << PAGE_BITS));
         }
 
         #[cfg(target_arch = "aarch64")]
         {
-            KERNEL_PT = MaybeUninit::new(kernel_page.ttbrx_el1() as usize);
+            KERNEL_PT = MaybeUninit::new(kernel_page.ttbrx_el1());
         }
     }
 }

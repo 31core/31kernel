@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 #![allow(clippy::deref_addrof)]
 
+mod address;
 mod arch;
 mod buddy_allocator;
 mod devfs;
@@ -164,13 +165,17 @@ fn load_dtb(dtb_addr: u64) -> Result<DeviceTree, ParseError> {
     unsafe {
         #[cfg(target_arch = "riscv64")]
         let mut kernel_page = {
-            use page::ppn_to_vpn;
-            PageMapper::from_pn(ppn_to_vpn(KERNEL_PT.assume_init()) as u64)
+            use address::{VirtAddr, VirtualPage};
+            use page::PAGE_BITS;
+
+            PageMapper::from_pn(VirtualPage(
+                VirtAddr::from(KERNEL_PT.assume_init()).0 >> PAGE_BITS,
+            ))
         };
         #[cfg(target_arch = "aarch64")]
         let mut kernel_page = {
-            use page::pa_to_va;
-            PageMapper::from_ttbrx_el1(pa_to_va(KERNEL_PT.assume_init()) as u64)
+            use address::VirtAddr;
+            PageMapper::from_ttbrx_el1(VirtAddr::from(KERNEL_PT.assume_init()))
         };
 
         let dtb_ptr = dtb_addr as *const u8;

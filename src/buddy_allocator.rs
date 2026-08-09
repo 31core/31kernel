@@ -4,7 +4,7 @@
 
 use crate::{
     global::Global,
-    page::{AllocError, PAGE_BITS, PAGE_SIZE, PageAllocator},
+    page::{AllocError, PAGE_BITS, PAGE_SIZE, PageAllocator, VA_BITS},
 };
 use core::ptr::NonNull;
 use spinlock::Spinlock;
@@ -12,7 +12,7 @@ use spinlock::Spinlock;
 const NODE_COMPATIBILITY: usize = 512;
 const EXT_NODE_COMPATIBILITY: usize = 8196;
 const MIN_POOL_REMAIN: usize = BUDDY_ALLOC_MAX_POW;
-const BUDDY_ALLOC_MAX_POW: usize = 48 - PAGE_BITS; // for 48-bit VA
+const BUDDY_ALLOC_MAX_POW: usize = VA_BITS - PAGE_BITS;
 const MEM_ZONES: usize = 16;
 
 pub static BUDDY_ALLOCATOR: Global<BuddyAllocator> = Spinlock::new(BuddyAllocator::default());
