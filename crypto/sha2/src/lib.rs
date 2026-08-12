@@ -142,31 +142,50 @@ impl Sha256 {
 
         for w_table_ptr in 16..64 {
             self.w_table[w_table_ptr] = self.w_table[w_table_ptr - 16]
-                + ssig0(self.w_table[w_table_ptr - 15])
-                + self.w_table[w_table_ptr - 7]
-                + ssig1(self.w_table[w_table_ptr - 2]);
+                .wrapping_add(ssig0(self.w_table[w_table_ptr - 15]))
+                .wrapping_add(self.w_table[w_table_ptr - 7])
+                .wrapping_add(ssig1(self.w_table[w_table_ptr - 2]));
         }
     }
     fn update_h(&mut self) {
         let mut h = self.h;
         for (round, k_r) in K_TABLE.iter().enumerate() {
             let ch = ch(h[4], h[5], h[6]);
-            let temp1 = h[7] + bsig1(h[4]) + ch + k_r + self.w_table[round];
+            let temp1 = h[7]
+                .wrapping_add(bsig1(h[4]))
+                .wrapping_add(ch)
+                .wrapping_add(*k_r)
+                .wrapping_add(self.w_table[round]);
             let maj = maj(h[0], h[1], h[2]);
-            let temp2 = bsig0(h[0]) + maj;
+            let temp2 = bsig0(h[0]).wrapping_add(maj);
 
             h[7] = h[6];
             h[6] = h[5];
             h[5] = h[4];
-            h[4] = h[3] + temp1;
+            h[4] = h[3].wrapping_add(temp1);
             h[3] = h[2];
             h[2] = h[1];
             h[1] = h[0];
-            h[0] = temp1 + temp2;
+            h[0] = temp1.wrapping_add(temp2);
         }
 
         for (i, h_i) in self.h.iter_mut().enumerate() {
-            *h_i += h[i];
+            *h_i = h_i.wrapping_add(h[i]);
         }
     }
+}
+
+#[test]
+fn test_sha256() {
+    #[rustfmt::skip]
+    const DIGEST: [u8; SHA256_DIGEST_LEN] = [
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+        0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+    ];
+
+    let mut husher = Sha256::default();
+    husher.update(b"abc");
+    let mut sum = [0; SHA256_DIGEST_LEN];
+    husher.digest(&mut sum);
+    assert_eq!(sum, DIGEST);
 }
