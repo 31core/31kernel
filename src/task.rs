@@ -5,12 +5,13 @@
 use crate::{
     address::{PhysPage, VirtPage, VirtualPage},
     arch::{Context, PageMapper},
-    buddy_allocator::ceil_to_power_2,
     global::GlobalUninit,
-    page::{KERNEL_PT, PAGE_BITS, PAGE_SIZE, Paging},
+    page::{
+        KERNEL_PT, PAGE_BITS, PAGE_SIZE, alloc_pages, buddy_allocator::ceil_to_power_2, free_pages,
+        mapping::Mapper,
+    },
     vfs::VfsFile,
 };
-use crate::{alloc_pages, free_pages};
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     string::{String, ToString},
@@ -21,16 +22,13 @@ use core::mem::MaybeUninit;
 use elf::{Elf, ElfError, PFlags, PType};
 use spinlock::Spinlock;
 
-pub static SCHEDULER: GlobalUninit<Scheduler<PageMapper>> = Spinlock::new(MaybeUninit::uninit());
+pub static SCHEDULER: GlobalUninit<Scheduler> = Spinlock::new(MaybeUninit::uninit());
 
 const USER_STACK_PAGES: usize = 16;
 
 #[derive(Default)]
-pub struct Scheduler<P>
-where
-    P: Paging + Send,
-{
-    pub tasks: BTreeMap<usize, Task<P>>,
+pub struct Scheduler {
+    pub tasks: BTreeMap<usize, Task>,
     /** (vruntime, pid) */
     pub vruntime: BTreeSet<(usize, usize)>,
     current_pid: usize,
@@ -38,20 +36,17 @@ where
     trap_stack: VirtPage,
 }
 
-impl<P> Scheduler<P>
-where
-    P: Paging + Send,
-{
+impl Scheduler {
     pub fn create_from_elf(&mut self, elf_bytes: &[u8]) -> Result<usize, ElfError> {
         let elf = Elf::parse(elf_bytes)?;
 
-        let mut page = unsafe { P::new() };
-        let stack = VirtualPage(alloc_pages!(USER_STACK_PAGES));
-        unsafe {
-            page.map_kernel_region();
-            page.map_data(self.trap_stack.0, PhysPage::from(self.trap_stack).0, 16);
-            page.map_data_u(stack.0, PhysPage::from(stack).0, USER_STACK_PAGES);
-        }
+        let mut page = PageMapper::new();
+        let stack = VirtualPage(alloc_pages(USER_STACK_PAGES));
+
+        page.map_kernel_region();
+        page.map_data(self.trap_stack.0, PhysPage::from(self.trap_stack).0, 16);
+        page.map_data_u(stack.0, PhysPage::from(stack).0, USER_STACK_PAGES);
+
         let mut page_allocs = Vec::new();
         page_allocs.push(Arc::new((
             stack.0,
@@ -65,14 +60,14 @@ where
                 let v_page = prog.v_addr >> PAGE_BITS;
                 let v_pages = prog.p_memsz.div_ceil(PAGE_SIZE);
 
-                let p_page = PhysPage::from(VirtualPage(alloc_pages!(ceil_to_power_2(v_pages))));
+                let p_page = PhysPage::from(VirtualPage(alloc_pages(ceil_to_power_2(v_pages))));
                 page_allocs.push(Arc::new((v_page, p_page, v_pages, prog.p_flags.to_vec())));
                 if prog.p_flags.contains(&PFlags::Exec) {
-                    unsafe { page.map_text_u(v_page, p_page.0, v_pages) };
+                    page.map_text_u(v_page, p_page.0, v_pages);
                 } else if prog.p_flags.contains(&PFlags::Write) {
-                    unsafe { page.map_data_u(v_page, p_page.0, v_pages) };
+                    page.map_data_u(v_page, p_page.0, v_pages);
                 } else {
-                    unsafe { page.map_rodata_u(v_page, p_page.0, v_pages) };
+                    page.map_rodata_u(v_page, p_page.0, v_pages);
                 }
 
                 let p_off = prog.v_addr & (PAGE_SIZE - 1); // offset to start of the page
@@ -122,16 +117,16 @@ where
 
         Ok(pid)
     }
-    pub fn current_task(&self) -> &Task<P> {
+    pub fn current_task(&self) -> &Task {
         self.tasks.get(&self.current_pid).unwrap()
     }
-    pub fn current_task_mut(&mut self) -> &mut Task<P> {
+    pub fn current_task_mut(&mut self) -> &mut Task {
         self.tasks.get_mut(&self.current_pid).unwrap()
     }
     /**
      * Do task schedule, and return the next task.
      */
-    pub fn schedule(&mut self) -> &Task<P> {
+    pub fn schedule(&mut self) -> &Task {
         loop {
             let (mut vruntime, pid) = self.vruntime.pop_first().unwrap();
             let task = self.tasks.get(&pid).unwrap();
@@ -161,7 +156,7 @@ where
      * Schedule, store context of current task, and set the context for the next task,
      * and return the next task.
      */
-    pub fn switch_task(&mut self, ctx: *mut Context) -> &Task<P> {
+    pub fn switch_task(&mut self, ctx: *mut Context) -> &Task {
         self.current_task_mut().context = unsafe { ctx.read() };
         let next_task = self.schedule();
         let next_ctx = next_task.context.clone();
@@ -174,21 +169,21 @@ where
         self.max_pid += 1;
         let pid = self.max_pid;
 
-        let mut page = unsafe { P::new() };
-        unsafe {
-            page.map_kernel_region();
-            page.map_data(self.trap_stack.0, PhysPage::from(self.trap_stack).0, 16);
-        }
+        let mut page = PageMapper::new();
+
+        page.map_kernel_region();
+        page.map_data(self.trap_stack.0, PhysPage::from(self.trap_stack).0, 16);
+
         let mut page_allocs = Vec::new();
 
         for alloc in &self.current_task().page_allocs {
             let (v_page, p_page, v_pages, flags) = alloc.as_ref();
 
             if flags.contains(&PFlags::Exec) {
-                unsafe { page.map_text_u(*v_page, p_page.0, *v_pages) };
+                page.map_text_u(*v_page, p_page.0, *v_pages);
                 page_allocs.push(Arc::clone(alloc));
             } else if flags.contains(&PFlags::Write) {
-                let p_page = PhysPage::from(VirtualPage(alloc_pages!(ceil_to_power_2(*v_pages))));
+                let p_page = PhysPage::from(VirtualPage(alloc_pages(ceil_to_power_2(*v_pages))));
                 page_allocs.push(Arc::new((*v_page, p_page, *v_pages, flags.clone())));
                 unsafe {
                     page.map_data_u(*v_page, p_page.0, *v_pages);
@@ -199,7 +194,7 @@ where
                     );
                 }
             } else {
-                unsafe { page.map_rodata_u(*v_page, p_page.0, *v_pages) };
+                page.map_rodata_u(*v_page, p_page.0, *v_pages);
                 page_allocs.push(Arc::clone(alloc));
             }
         }
@@ -253,14 +248,11 @@ const NICE_MIN: isize = -20;
 
 type PageAllocInfo = Arc<(usize, PhysPage, usize, Vec<PFlags>)>; // (v_page, p_page, v_pages, flags)
 
-pub struct Task<P>
-where
-    P: Paging + Send,
-{
+pub struct Task {
     pub uid: usize,
     pub pid: usize,
     pub ppid: usize,
-    pub page: P,
+    pub page: PageMapper,
     pub nice: isize,
     pub context: Context,
     /** Track pages allocations */
@@ -270,12 +262,9 @@ where
     pub fds: FdTable,
 }
 
-unsafe impl<P> Sync for Task<P> where P: Paging + Send {}
+unsafe impl Sync for Task {}
 
-impl<P> Task<P>
-where
-    P: Paging + Send,
-{
+impl Task {
     pub fn renice(&mut self, nice: isize) {
         if (NICE_MIN..=NICE_MAX).contains(&nice) {
             self.nice = nice;
@@ -369,39 +358,26 @@ where
     }
 }
 
-impl<P> Drop for Task<P>
-where
-    P: Paging + Send,
-{
+impl Drop for Task {
     fn drop(&mut self) {
-        unsafe { self.page.destroy() };
+        self.page.destroy();
         for alloc in &mut self.page_allocs {
             let (_vpage, p_page, page_count, _flags) = alloc.as_ref();
             if Arc::strong_count(alloc) == 1 {
-                free_pages!(VirtPage::from(*p_page).0, ceil_to_power_2(*page_count));
+                free_pages(VirtPage::from(*p_page).0, ceil_to_power_2(*page_count));
             }
         }
     }
 }
 
 pub fn task_init() {
-    let trap_stack = VirtualPage(alloc_pages!(16));
+    let trap_stack = VirtualPage(alloc_pages(16));
     unsafe {
         crate::trap::trap_stack_init(trap_stack);
     }
 
-    #[cfg(target_arch = "riscv64")]
-    let kernel_page = unsafe {
-        use crate::address::VirtAddr;
-        PageMapper::from_pn(VirtualPage(
-            VirtAddr::from(KERNEL_PT.assume_init()).0 >> PAGE_BITS,
-        ))
-    };
-    #[cfg(target_arch = "aarch64")]
-    let kernel_page = unsafe {
-        use crate::address::VirtAddr;
-        PageMapper::from_ttbrx_el1(VirtAddr::from(KERNEL_PT.assume_init()))
-    };
+    let kernel_page = unsafe { PageMapper::from_root(VirtPage::from(KERNEL_PT.assume_init())) };
+
     let kernel_task = Task {
         page: kernel_page,
         uid: 0,

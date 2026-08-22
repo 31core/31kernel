@@ -1,6 +1,6 @@
 use super::{
     cpu::{Context, set_timer},
-    page::{PageMapper, refresh_tlb, set_ttbrx},
+    page::{refresh_tlb, set_ttbrx},
 };
 use crate::{
     arch::arm64::gic::*,
@@ -23,7 +23,7 @@ const ESR_EC_DATA_ABORT: u64 = 0x24;
 
 /** switch to kernel page table */
 unsafe fn to_kernel_pt() {
-    let tbbrx_el1 = unsafe { (*(&raw mut KERNEL_PT)).assume_init().0 as u64 };
+    let tbbrx_el1 = unsafe { ((*(&raw mut KERNEL_PT)).assume_init().0 as u64) << 12 };
     unsafe {
         set_ttbrx(tbbrx_el1);
         refresh_tlb();
@@ -36,7 +36,7 @@ unsafe fn to_kernel_pt() {
  * * Set up the next task's conext.
  * * Switch to the next task's page table.
  */
-pub unsafe fn kill_task(scheduler: &mut Scheduler<PageMapper>, ctx: *mut Context) {
+pub unsafe fn kill_task(scheduler: &mut Scheduler, ctx: *mut Context) {
     let current_pid = scheduler.current_task().pid;
     scheduler.kill(current_pid);
 

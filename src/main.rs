@@ -5,7 +5,6 @@
 
 mod address;
 mod arch;
-mod buddy_allocator;
 mod devfs;
 mod device;
 mod global;
@@ -23,7 +22,7 @@ mod vfs;
 
 use core::{arch::asm, ptr::addr_of};
 use dtb::{DeviceTree, Node, ParseError, utils::*};
-use page::Paging;
+use page::{Paging, buddy_allocator::BUDDY_ALLOCATOR, mapping::Mapper};
 
 extern crate alloc;
 
@@ -160,35 +159,23 @@ fn setup_console(dtb: &DeviceTree) {
 }
 
 fn load_dtb(dtb_addr: u64) -> Result<DeviceTree, ParseError> {
+    use address::VirtPage;
     use arch::PageMapper;
-    use page::{KERNEL_PT, PAGE_SIZE};
+    use page::{KERNEL_PT, PAGE_BITS, PAGE_SIZE};
     unsafe {
-        #[cfg(target_arch = "riscv64")]
-        let mut kernel_page = {
-            use address::{VirtAddr, VirtualPage};
-            use page::PAGE_BITS;
-
-            PageMapper::from_pn(VirtualPage(
-                VirtAddr::from(KERNEL_PT.assume_init()).0 >> PAGE_BITS,
-            ))
-        };
-        #[cfg(target_arch = "aarch64")]
-        let mut kernel_page = {
-            use address::VirtAddr;
-            PageMapper::from_ttbrx_el1(VirtAddr::from(KERNEL_PT.assume_init()))
-        };
+        let mut kernel_page = { PageMapper::from_root(VirtPage::from(KERNEL_PT.assume_init())) };
 
         let dtb_ptr = dtb_addr as *const u8;
         kernel_page.map_rodata(
-            dtb_addr as usize / PAGE_SIZE,
-            dtb_addr as usize / PAGE_SIZE,
+            dtb_addr as usize >> PAGE_BITS,
+            dtb_addr as usize >> PAGE_BITS,
             1,
         );
         kernel_page.refresh();
         let dtb_size = DeviceTree::detect_totalsize(dtb_ptr);
         kernel_page.map_rodata(
-            dtb_addr as usize / PAGE_SIZE + 1,
-            dtb_addr as usize / PAGE_SIZE + 1,
+            (dtb_addr as usize >> PAGE_BITS) + 1,
+            (dtb_addr as usize >> PAGE_BITS) + 1,
             dtb_size.div_ceil(PAGE_SIZE) - 1,
         );
         kernel_page.refresh();
@@ -202,12 +189,11 @@ pub extern "C" fn kernel_main(dtb_addr: u64) -> ! {
     clear_bss();
     cpu_init();
     unsafe {
-        use buddy_allocator::BUDDY_ALLOCATOR;
-        use page::PAGE_SIZE;
+        use page::PAGE_BITS;
         BUDDY_ALLOCATOR.lock().init();
         BUDDY_ALLOCATOR.lock().add_zone(
-            addr_of!(HEAP_START) as usize / PAGE_SIZE,
-            MEM_SIZE / PAGE_SIZE,
+            addr_of!(HEAP_START) as usize >> PAGE_BITS,
+            MEM_SIZE >> PAGE_BITS,
         );
     }
 

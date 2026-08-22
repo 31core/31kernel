@@ -2,7 +2,8 @@
  * An mcache allocator for small objects allocation.
  */
 
-use crate::{alloc_pages, buddy_allocator::ceil_to_power_2, free_pages, page::PAGE_SIZE};
+use crate::page::{PAGE_BITS, PAGE_SIZE};
+use crate::page::{alloc_pages, buddy_allocator::ceil_to_power_2, free_pages};
 use core::{
     alloc::{GlobalAlloc, Layout},
     mem::size_of,
@@ -140,7 +141,7 @@ impl CachePage {
     fn allocate(cell_size: usize, cell_count: usize) -> *mut Self {
         let page_count = ceil_to_power_2(cell_count * cell_size / PAGE_SIZE);
         let offset = size_of::<CachePage>().div_ceil(cell_size); // offest in n cells size
-        let cache_addr = (PAGE_SIZE * alloc_pages!(page_count)) as *mut CachePage;
+        let cache_addr = (PAGE_SIZE * alloc_pages(page_count)) as *mut CachePage;
         let mut cache = CachePage {
             page_start: cache_addr as *mut u8,
             page_count,
@@ -156,7 +157,7 @@ impl CachePage {
     }
     /** free object cache */
     fn deallocate(&self) {
-        free_pages!(self.page_start as usize / PAGE_SIZE, self.page_count);
+        free_pages(self.page_start as usize >> PAGE_BITS, self.page_count);
     }
     fn alloc_obj(&mut self) -> Option<*mut u8> {
         if self.free_count == 0 {
@@ -338,7 +339,7 @@ impl CacheManager {
             }
             /* use buddy allocator for large object */
             else {
-                (PAGE_SIZE * alloc_pages!(layout.size().div_ceil(PAGE_SIZE))) as *mut u8
+                (PAGE_SIZE * alloc_pages(layout.size().div_ceil(PAGE_SIZE))) as *mut u8
             }
         }
     }
@@ -406,7 +407,7 @@ impl CacheManager {
                     }
                 }
             } else {
-                free_pages!(ptr as usize / PAGE_SIZE, layout.size().div_ceil(PAGE_SIZE));
+                free_pages(ptr as usize >> PAGE_BITS, layout.size().div_ceil(PAGE_SIZE));
             }
         }
     }

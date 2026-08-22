@@ -52,12 +52,11 @@ pub fn init_gic_regs(node: &Node) -> Result<(), &str> {
         && let Some(reg) = node.get_property("reg")
     {
         use crate::{
-            address::VirtAddr,
-            page::{KERNEL_PT, PAGE_SIZE, Paging},
+            address::VirtPage,
+            page::{KERNEL_PT, PAGE_BITS, PAGE_SIZE, mapping::Mapper},
         };
-        let mut kernel_pt = unsafe {
-            super::page::PageMapper::from_ttbrx_el1(VirtAddr::from(KERNEL_PT.assume_init()))
-        };
+        let mut kernel_pt =
+            unsafe { super::page::Arm64Mapper::from_root(VirtPage::from(KERNEL_PT.assume_init())) };
 
         let regs = parse_reg(reg, node.address_cells, node.size_cells);
 
@@ -68,13 +67,11 @@ pub fn init_gic_regs(node: &Node) -> Result<(), &str> {
 
         /* map registers */
         for (reg_addr, reg_size) in regs {
-            unsafe {
-                kernel_pt.map_data(
-                    reg_addr as usize / PAGE_SIZE,
-                    reg_addr as usize / PAGE_SIZE,
-                    (reg_size as usize).div_ceil(PAGE_SIZE),
-                );
-            }
+            kernel_pt.map_data(
+                reg_addr as usize >> PAGE_BITS,
+                reg_addr as usize >> PAGE_BITS,
+                (reg_size as usize).div_ceil(PAGE_SIZE),
+            );
         }
         Ok(())
     } else {

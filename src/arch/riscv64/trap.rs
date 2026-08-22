@@ -1,7 +1,7 @@
 use super::cpu::Context;
 use crate::{
     arch::riscv64::{page::MODE_SV39, *},
-    page::{KERNEL_PT, PAGE_BITS, Paging},
+    page::{KERNEL_PT, Paging},
     task::{SCHEDULER, Scheduler, Task},
 };
 use core::arch::{asm, global_asm};
@@ -19,10 +19,7 @@ const SCAUSE_TIMER_S: u64 = 5 | INTERRUPT_FLAG;
 const SCAUSE_ECALL_U: u64 = 8;
 const SCAUSE_ECALL_S: u64 = 9;
 
-pub(super) fn switch_privilege_level<P>(next_task: &Task<P>)
-where
-    P: Paging + Send,
-{
+pub(super) fn switch_privilege_level(next_task: &Task) {
     if !next_task.is_kernel() {
         unsafe { asm!("csrc sstatus, {}", in(reg) 1 << 8) }; // set SPP to user mode
     } else {
@@ -42,7 +39,7 @@ pub unsafe extern "C" fn mtrap_handler(ctx: &mut Context) -> &mut Context {
 }
 
 unsafe fn to_kernel_pt() {
-    let kernel_ppn = unsafe { (*(&raw mut KERNEL_PT)).assume_init().0 as u64 >> PAGE_BITS };
+    let kernel_ppn = unsafe { (*(&raw mut KERNEL_PT)).assume_init().0 as u64 };
     let satp = kernel_ppn | (MODE_SV39 << 60);
     unsafe {
         asm!("csrw satp, {}", in(reg) satp);
@@ -56,10 +53,7 @@ unsafe fn to_kernel_pt() {
  * * Set up the next task's conext.
  * * Switch to the next task's page table.
  */
-pub unsafe fn kill_task<P>(scheduler: &mut Scheduler<P>, ctx: *mut Context)
-where
-    P: Paging + Send,
-{
+pub unsafe fn kill_task(scheduler: &mut Scheduler, ctx: *mut Context) {
     let current_pid = scheduler.current_task().pid;
     scheduler.kill(current_pid);
 

@@ -3,12 +3,13 @@
  */
 
 use crate::{
-    address::{PhysAddr, PhysPage, PhysicalPage, VirtAddr, VirtPage, VirtualAddress, VirtualPage},
-    page::{PAGE_BITS, PageACL, PageAllocator, Paging},
+    address::{PhysPage, PhysicalPage, VirtPage},
+    page::{
+        PAGE_BITS, PageACL, PageAllocator, Paging,
+        mapping::{Entry, Mapper, Table},
+    },
 };
 use core::arch::asm;
-
-const PTES_PER_DIR: usize = 512;
 
 const TYPE_VALID: u64 = 0b01;
 const TYPE_BLOCK_ENTRY: u64 = 0b00;
@@ -56,178 +57,79 @@ pub(super) unsafe fn refresh_tlb() {
 #[repr(transparent)]
 pub struct TableDescriptor(u64);
 
-impl TableDescriptor {
-    fn ppn(&self) -> PhysPage {
-        PhysicalPage((self.0 >> 12) as usize)
-    }
-    fn is_leaf(&self) -> bool {
-        self.0 & TYPE_TABLE_ENTRY == 0
+impl Entry for TableDescriptor {
+    fn empty() -> Self {
+        Self(0)
     }
     fn is_valid(&self) -> bool {
         self.0 & TYPE_VALID > 0
     }
-}
+    fn new(page_number: usize, leaf: bool, mode: &[PageACL]) -> Self {
+        let mut descriptor = (page_number as u64) << 12;
 
-pub struct PageTable {
-    pub ptes: *mut TableDescriptor,
-}
-
-impl PageTable {
-    fn from_pn(page_num: VirtPage) -> Self {
-        Self {
-            ptes: (page_num.0 << PAGE_BITS) as *mut TableDescriptor,
-        }
-    }
-    pub fn set_descriptor(&self, index: usize, pte: TableDescriptor) {
-        unsafe { self.ptes.add(index).write_volatile(pte) };
-    }
-    /** check if a page directory contains any PTE */
-    fn is_empty(&self) -> bool {
-        for i in 0..PTES_PER_DIR {
-            if unsafe { self.ptes.add(i).read_volatile().0 } != 0 {
-                return false;
+        if leaf {
+            if mode.contains(&PageACL::User) {
+                descriptor |= AP1;
             }
-        }
-        true
-    }
-    /** Get a descriptor and ensure the next level of table is not empty */
-    unsafe fn get_not_empty<A>(&self, alloc: &mut A, index: usize) -> TableDescriptor
-    where
-        A: PageAllocator,
-    {
-        let td = unsafe { self.ptes.add(index).read_volatile() };
-        if td.0 == 0 {
-            /* descriptor is empty */
-            let ppn = PhysPage::from(VirtualPage(alloc.alloc_pages(1).unwrap()));
-            let td = TableDescriptor((ppn.0 << 12) as u64 | TYPE_VALID | TYPE_TABLE_ENTRY);
-            self.set_descriptor(index, td);
-
-            td
+            if mode.contains(&PageACL::Write) {
+                descriptor |= AP2_RW;
+            } else {
+                descriptor |= AP2_RO;
+            }
+            if !mode.contains(&PageACL::Execute) {
+                descriptor |= UXN;
+                descriptor |= PXN;
+            } else if !mode.contains(&PageACL::User) {
+                descriptor |= UXN;
+            }
+            descriptor |= AF | TYPE_VALID | TYPE_PAGE_ENTRY;
         } else {
-            td
+            descriptor |= TYPE_VALID | TYPE_TABLE_ENTRY;
         }
+
+        Self(descriptor)
+    }
+    fn page_number(&self) -> PhysPage {
+        PhysicalPage(self.0 as usize >> PAGE_BITS)
     }
 }
 
-pub struct PageMapper {
-    pub root: PageTable,
+pub type PageMapper = Arm64Mapper<TableDescriptor>;
+
+pub struct Arm64Mapper<E: Entry> {
+    root: Table<E>,
 }
 
-impl PageMapper {
-    fn root_ppn(&self) -> PhysPage {
-        PhysicalPage(self.root.ptes as usize >> 12)
+unsafe impl Send for Arm64Mapper<TableDescriptor> {}
+
+impl Mapper<TableDescriptor> for Arm64Mapper<TableDescriptor> {
+    const LEVEL: usize = 4;
+    const PTES_PER_DIR: usize = 512;
+    const PTE_BITS: usize = 9;
+    fn root_table(&self) -> Table<TableDescriptor> {
+        self.root
     }
-    pub fn from_ttbrx_el1(ttbrx_el1: VirtAddr) -> Self {
+
+    fn new_with_allocator<A>(alloc: &mut A) -> Self
+    where
+        A: PageAllocator,
+    {
         Self {
-            root: PageTable {
-                ptes: ttbrx_el1.0 as *mut TableDescriptor,
-            },
+            root: Table::new(alloc),
         }
     }
-    pub fn ttbrx_el1(&self) -> PhysAddr {
-        VirtualAddress(self.root.ptes as usize).into()
-    }
-    unsafe fn map_4k<A>(&mut self, alloc: &mut A, vpn: usize, ppn: usize, mode: u64)
-    where
-        A: PageAllocator,
-    {
-        let l0 = (vpn >> 27) & 0x1ff;
-        let l1 = (vpn >> 18) & 0x1ff;
-        let l2 = (vpn >> 9) & 0x1ff;
-        let l3 = vpn & 0x1ff;
 
-        let l0_td = unsafe { self.root.get_not_empty(alloc, l0) };
-
-        let l1_pt = PageTable::from_pn(VirtPage::from(l0_td.ppn()));
-        let l1_td = unsafe { l1_pt.get_not_empty(alloc, l1) };
-
-        let l2_pt = PageTable::from_pn(VirtPage::from(l1_td.ppn()));
-        let l2_td = unsafe { l2_pt.get_not_empty(alloc, l2) };
-
-        let l3_pt = PageTable::from_pn(VirtPage::from(l2_td.ppn()));
-        l3_pt.set_descriptor(
-            l3,
-            TableDescriptor((ppn as u64) << 12 | TYPE_VALID | TYPE_PAGE_ENTRY | mode),
-        );
-    }
-    unsafe fn unmap_4k(&mut self, vpn: usize) {
-        let l0 = (vpn >> 27) & 0x1ff;
-        let l1 = (vpn >> 18) & 0x1ff;
-        let l2 = (vpn >> 9) & 0x1ff;
-        let l3 = vpn & 0x1ff;
-
-        let l0_td = unsafe { self.root.ptes.add(l0).read_volatile() };
-
-        let l1_pt = PageTable::from_pn(VirtPage::from(l0_td.ppn()));
-        let l1_td = unsafe { l1_pt.ptes.add(l1).read_volatile() };
-
-        let l2_pt = PageTable::from_pn(VirtPage::from(l1_td.ppn()));
-        let l2_td = unsafe { l2_pt.ptes.add(l2).read_volatile() };
-
-        let l3_pt = PageTable::from_pn(VirtPage::from(l2_td.ppn()));
-        l3_pt.set_descriptor(l3, TableDescriptor(0));
+    fn from_root(page_number: VirtPage) -> Self {
+        Self {
+            root: Table::from_page(page_number),
+        }
     }
 }
 
-unsafe impl Send for PageMapper {}
-
-impl Paging for PageMapper {
-    unsafe fn new_with_allocator<A>(alloc: &mut A) -> Self
-    where
-        A: PageAllocator,
-    {
-        let root_pdir = VirtualPage(alloc.alloc_pages(1).unwrap());
-        Self {
-            root: PageTable::from_pn(root_pdir),
-        }
-    }
-    unsafe fn map_with_allocator<A>(
-        &mut self,
-        alloc: &mut A,
-        mut vpn: usize,
-        mut ppn: usize,
-        mut pages: usize,
-        mode: &[PageACL],
-    ) where
-        A: PageAllocator,
-    {
-        let mut mode_u64 = 0;
-        if mode.contains(&PageACL::User) {
-            mode_u64 |= AP1;
-        }
-        if mode.contains(&PageACL::Write) {
-            mode_u64 |= AP2_RW;
-        } else {
-            mode_u64 |= AP2_RO;
-        }
-        if !mode.contains(&PageACL::Execute) {
-            mode_u64 |= UXN;
-            mode_u64 |= PXN;
-        } else if !mode.contains(&PageACL::User) {
-            mode_u64 |= UXN;
-        }
-        mode_u64 |= AF;
-
-        while pages > 0 {
-            unsafe { self.map_4k(alloc, vpn, ppn, mode_u64) };
-            vpn += 1;
-            ppn += 1;
-            pages -= 1;
-        }
-    }
-    unsafe fn unmap_with_allocator<A>(&mut self, _alloc: &mut A, mut vpn: usize, mut pages: usize)
-    where
-        A: PageAllocator,
-    {
-        while pages > 0 {
-            unsafe { self.unmap_4k(vpn) };
-            vpn += 1;
-            pages -= 1;
-        }
-    }
+impl Paging<TableDescriptor> for Arm64Mapper<TableDescriptor> {
     unsafe fn switch_to(&self) {
         unsafe {
-            set_ttbrx(self.ttbrx_el1().0 as u64);
+            set_ttbrx((self.root.page_number().0 as u64) << PAGE_BITS);
             mmu_enable();
         }
     }
@@ -235,36 +137,5 @@ impl Paging for PageMapper {
         unsafe {
             refresh_tlb();
         }
-    }
-    unsafe fn destroy_with_allocator<A>(&mut self, alloc: &mut A)
-    where
-        A: PageAllocator,
-    {
-        for l0 in 0..PTES_PER_DIR {
-            let l0_td: TableDescriptor = unsafe { self.root.ptes.add(l0).read_volatile() };
-            if !l0_td.is_valid() {
-                continue;
-            }
-            let l1_pt = PageTable::from_pn(VirtPage::from(l0_td.ppn()));
-
-            for l1 in 0..PTES_PER_DIR {
-                let l1_td: TableDescriptor = unsafe { l1_pt.ptes.add(l1).read_volatile() };
-                if !l1_td.is_valid() {
-                    continue;
-                }
-                let l2_pt = PageTable::from_pn(VirtPage::from(l1_td.ppn()));
-
-                for l2 in 0..PTES_PER_DIR {
-                    let l2_td: TableDescriptor = unsafe { l2_pt.ptes.add(l2).read_volatile() };
-                    /* point to l3 table */
-                    if !l2_td.is_leaf() && l2_td.is_valid() {
-                        alloc.free_pages(VirtPage::from(l2_td.ppn()).0, 1);
-                    }
-                }
-                alloc.free_pages(VirtPage::from(l1_td.ppn()).0, 1);
-            }
-            alloc.free_pages(VirtPage::from(l0_td.ppn()).0, 1);
-        }
-        alloc.free_pages(VirtPage::from(self.root_ppn()).0, 1);
     }
 }

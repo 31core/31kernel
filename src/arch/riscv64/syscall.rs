@@ -6,10 +6,7 @@ use crate::{
 };
 use core::arch::asm;
 
-unsafe fn syscall_fork<P>(scheduler: &mut Scheduler<P>, ctx: *mut Context)
-where
-    P: Paging + Send,
-{
+unsafe fn syscall_fork(scheduler: &mut Scheduler, ctx: *mut Context) {
     unsafe { scheduler.current_task_mut().context = ctx.read() };
     let child_pid = scheduler.fork();
     unsafe {
